@@ -131,7 +131,16 @@ FastAPI backend (`server/`) with JWT authentication:
 - `app/core/` - Configuration, database, security (JWT, bcrypt)
 - `app/models/` - SQLAlchemy ORM models
 - `app/schemas/` - Pydantic validation schemas
+- `app/services/` - Business logic layer (diagnosis agents, LangChain integration)
+- `app/repositories/` - Data access layer
 - `main.py` - Application entry point with CORS configuration
+
+### Agent System (LangChain)
+
+The backend uses LangChain for multi-agent diagnosis workflows:
+- `langchain==0.3.0` and `langchain-openai==0.2.0` for agent orchestration
+- Agents communicate via WebSocket to stream real-time updates to frontend
+- Service layer (`app/services/`) contains agent implementations
 
 ## Important Patterns
 
@@ -166,9 +175,27 @@ Backend (`server/.env`):
 - `SECRET_KEY` - JWT signing key (must be changed in production)
 - `ACCESS_TOKEN_EXPIRE_MINUTES` - Token expiration time
 - `CORS_ORIGINS` - Allowed frontend origins
+- `LOG_LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- `LOG_FILE` - Log file path (default: `logs/aiops.log`)
 
 ## Backend API Documentation
 
 When server is running, access interactive API docs:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
+
+## Logging
+
+The backend uses Python's standard logging module with both console and file output. See `server/LOGGING.md` for detailed configuration.
+
+Key log locations:
+- Authentication events (login, logout, token validation)
+- WebSocket connections and message flow
+- Diagnosis agent workflow
+- API endpoint access
+- Permission checks
+
+View logs in real-time:
+```bash
+tail -f logs/aiops.log
+```

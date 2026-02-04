@@ -249,7 +249,7 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
   startDiagnosis: async (agentType: string, symptom: string, description: string) => {
     try {
       await investigationApi.startDiagnosis(agentType, symptom, description);
-      
+
       const caseId = `CASE-${agentType.toUpperCase()}-${Date.now()}`;
 
       const newCase: DiagnosisCase = {
@@ -264,7 +264,16 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
         createdAt: new Date().toISOString(),
       };
 
-      set({ currentCase: newCase, isRunning: true, proposedAction: null, currentAgentType: agentType });
+      set({
+        currentCase: newCase,
+        isRunning: true,
+        proposedAction: null,
+        currentAgentType: agentType,
+        traces: new Map(),
+        rootAgentIds: [],
+        selectedAgentId: null,
+        pendingConfirmation: null,
+      });
 
       wsService.startDiagnosis(symptom, description, agentType);
     } catch (error) {
