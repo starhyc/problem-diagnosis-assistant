@@ -6,6 +6,7 @@ from datetime import datetime
 import uuid
 from app.services.diagnosis_agent import MockDiagnosisAgent
 from app.services.qa_agent import QAAgent
+from app.services.demo_trace import DemoTraceGenerator
 from app.core.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -122,15 +123,26 @@ async def start_diagnosis(client_id: str, data: dict):
 
     logger.info(f"开始诊断 [{client_id}]: agent={agent_type}, symptom={symptom}")
 
-    agent = AGENT_REGISTRY.get(agent_type, diagnosis_agent)
-
-    async def callback(message: dict):
+    # Use demo trace generator for trace visualization
+    async def ws_send(message: dict):
         if client_id in manager.active_connections:
             await manager.send_message(client_id, message)
 
+    demo_generator = DemoTraceGenerator(ws_send)
+
     try:
+        # Run demo trace in background
+        await demo_generator.generate_demo_trace()
+
+        # Also run the original agent for backward compatibility
+        agent = AGENT_REGISTRY.get(agent_type, diagnosis_agent)
+        async def callback(message: dict):
+            if client_id in manager.active_connections:
+                await manager.send_message(client_id, message)
+
         async for event in agent.stream_diagnosis(symptom, description, callback, context):
             pass
+
         logger.info(f"诊断完成 [{client_id}]: agent={agent_type}")
     except Exception as e:
         logger.error(f"诊断失败 [{client_id}]: agent={agent_type}, error={e}", exc_info=True)
