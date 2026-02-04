@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #0b1120;
+  color: #f8fafc;
+  line-height: 1.5;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+.code-font {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.glow-active {
+  box-shadow: 0 0 0 1px #3b82f6, 0 0 12px rgba(59, 130, 246, 0.3);
+}
+
+@keyframes typing {
+  from { width: 0 }
+  to { width: 100% }
+}
+
+@keyframes blink-caret {
+  from, to { border-color: transparent }
+  50% { border-color: #3b82f6 }
+}
+
+.react-flow__node {
+  background: #1e293b !important;
+  border: 2px solid rgba(148, 163, 184, 0.2) !important;
+  border-radius: 8px !important;
+}
+
+.react-flow__edge-path {
+  stroke: rgba(148, 163, 184, 0.3) !important;
+  stroke-width: 2px !important;
+}
+
+.react-flow__controls {
+  background: #1e293b !important;
+  border: 1px solid rgba(148, 163, 184, 0.2) !important;
+  border-radius: 8px !important;
+}
+
+.react-flow__controls button {
+  background: #1e293b !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2) !important;
+  color: #94a3b8 !important;
+}
+
+.react-flow__controls button:hover {
+  background: #334155 !important;
+}
