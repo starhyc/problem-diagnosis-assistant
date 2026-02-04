@@ -64,13 +64,29 @@ class WebSocketService {
   private connectionStatus: ConnectionStatus = 'disconnected';
   private statusHandlers: Set<(status: ConnectionStatus) => void> = new Set();
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private manualDisconnect = false;
+  private connectingPromise: Promise<void> | null = null;
 
   constructor(url: string = 'ws://localhost:8000/api/v1/agent/ws') {
     this.url = url;
   }
 
   connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      return Promise.resolve();
+    }
+
+    if (this.ws?.readyState === WebSocket.CONNECTING && this.connectingPromise) {
+      return this.connectingPromise;
+    }
+
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+
+    this.manualDisconnect = false;
+    this.connectingPromise = new Promise((resolve, reject) => {
       try {
         this.setConnectionStatus('connecting');
         this.ws = new WebSocket(this.url);
@@ -79,6 +95,7 @@ class WebSocketService {
           console.log('[WebSocket] Connected to agent CLI');
           this.reconnectAttempts = 0;
           this.setConnectionStatus('connected');
+          this.connectingPromise = null;
           resolve();
         };
 
@@ -94,36 +111,50 @@ class WebSocketService {
         this.ws.onerror = (error) => {
           console.error('[WebSocket] Error:', error);
           this.setConnectionStatus('error');
+          this.connectingPromise = null;
           reject(error);
         };
 
         this.ws.onclose = () => {
           console.log('[WebSocket] Connection closed');
           this.setConnectionStatus('disconnected');
+          this.connectingPromise = null;
           this.attemptReconnect();
         };
       } catch (error) {
         this.setConnectionStatus('error');
+        this.connectingPromise = null;
         reject(error);
       }
     });
+
+    return this.connectingPromise;
   }
 
   disconnect(): void {
+    this.manualDisconnect = true;
+    this.reconnectAttempts = 0;
+
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-    
+
+    this.connectingPromise = null;
     this.setConnectionStatus('disconnected');
   }
 
   private attemptReconnect(): void {
+    if (this.manualDisconnect) {
+      console.log('[WebSocket] Manual disconnect, skipping reconnect');
+      return;
+    }
+
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.log('[WebSocket] Max reconnection attempts reached');
       return;
