@@ -11,7 +11,7 @@ export interface JSONRPCResponse {
 }
 
 export interface WSMessage {
-  type: 'agent_message' | 'action_proposal' | 'diagnosis_status' | 'error' | 'confirmation_required' | 'action_result' | 'timeline_update' | 'confidence_update';
+  type: 'agent_message' | 'action_proposal' | 'diagnosis_status' | 'error' | 'confirmation_required' | 'action_result' | 'timeline_update' | 'confidence_update' | 'agent_trace_start' | 'agent_trace_step' | 'agent_trace_complete';
   data: any;
   timestamp: string;
 }

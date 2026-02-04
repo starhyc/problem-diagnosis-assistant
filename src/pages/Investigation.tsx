@@ -13,6 +13,7 @@ import {
   ConfirmationDialog,
   ActionProposalBar,
   TopologyGraph,
+  AgentTracePanel,
 } from '../components/investigation';
 import { Tabs } from '../components/common';
 
@@ -22,7 +23,6 @@ export default function Investigation() {
   const [selectedModel, setSelectedModel] = useState<ModelType>('gpt-4');
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, File[]>>({});
   const [activeTab, setActiveTab] = useState<'agents' | 'timeline' | 'evidence'>('agents');
-  const [rightTab, setRightTab] = useState<'topology' | 'hypothesis'>('topology');
   const { user } = useAuthStore();
   
   const {
@@ -68,11 +68,6 @@ export default function Investigation() {
     { id: 'evidence', label: '证据面板' },
   ];
 
-  const rightTabs = [
-    { id: 'topology', label: '调用链拓扑' },
-    { id: 'hypothesis', label: '假设树' },
-  ];
-
   return (
     <div className="h-full flex flex-col">
       <Header 
@@ -114,30 +109,9 @@ export default function Investigation() {
           sampleLogs={currentCase?.messages.find(m => m.type === 'evidence')?.content || ''}
         />
 
-        <RightPanel
-          activeTab={rightTab}
-          onTabChange={setRightTab}
-          tabs={rightTabs}
-          topologyNodes={currentCase?.timeline.map((_, i) => ({
-            id: `node-${i}`,
-            label: `Node ${i}`,
-            type: 'service',
-            status: i % 3 === 0 ? 'healthy' : 'warning',
-          })) || []}
-          topologyEdges={currentCase?.timeline.slice(0, -1).map((_, i) => ({
-            source: `node-${i}`,
-            target: `node-${i + 1}`,
-          })) || []}
-          hypothesisTree={currentCase?.messages.find(m => m.type === 'hypothesis') ? {
-            root: {
-              id: 'root',
-              label: 'MySQL连接池耗尽',
-              type: 'symptom',
-              probability: 0.8,
-              status: 'investigating',
-            },
-          } : null}
-        />
+        <div className="w-96 border-l border-border-subtle flex flex-col">
+          <AgentTracePanel />
+        </div>
       </div>
 
       {pendingConfirmation && (

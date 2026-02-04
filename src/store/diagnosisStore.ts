@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { investigationApi } from '../lib/api';
 import { wsService, WSMessage, ConfirmationRequired } from '../lib/websocket';
+import { AgentTrace } from '../types/trace';
 
 export interface AgentMessage {
   id: string;
@@ -40,7 +41,12 @@ interface DiagnosisState {
   wsConnected: boolean;
   pendingConfirmation: ConfirmationRequired | null;
   currentAgentType: string;
-  
+
+  // Trace state
+  traces: Map<string, AgentTrace>;
+  selectedAgentId: string | null;
+  rootAgentIds: string[];
+
   startDiagnosis: (agentType: string, symptom: string, description: string) => void;
   stopDiagnosis: () => void;
   approveAction: () => void;
@@ -48,6 +54,7 @@ interface DiagnosisState {
   respondToConfirmation: (confirmationId: string, response: any) => void;
   initializeWebSocket: () => void;
   disconnectWebSocket: () => void;
+  selectAgent: (agentId: string | null) => void;
 }
 
 let wsUnsubscribe: (() => void) | null = null;
@@ -60,6 +67,9 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
   wsConnected: false,
   pendingConfirmation: null,
   currentAgentType: 'diagnosis',
+  traces: new Map(),
+  selectedAgentId: null,
+  rootAgentIds: [],
 
   initializeWebSocket: () => {
     if (wsUnsubscribe) return;
@@ -149,6 +159,73 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
           set({ isRunning: false });
           break;
         }
+
+        case 'agent_trace_start': {
+          const traceData = message.data;
+          const newTrace: AgentTrace = {
+            id: traceData.agentId,
+            name: traceData.agentName,
+            parentId: traceData.parentId || null,
+            status: 'running',
+            startTime: traceData.startTime,
+            totalTokens: { input: 0, output: 0 },
+            steps: [],
+          };
+
+          set((s) => {
+            const newTraces = new Map(s.traces);
+            newTraces.set(traceData.agentId, newTrace);
+
+            const newRootIds = traceData.parentId
+              ? s.rootAgentIds
+              : [...s.rootAgentIds, traceData.agentId];
+
+            return {
+              traces: newTraces,
+              rootAgentIds: newRootIds,
+              selectedAgentId: s.selectedAgentId || traceData.agentId,
+            };
+          });
+          break;
+        }
+
+        case 'agent_trace_step': {
+          const stepData = message.data;
+          set((s) => {
+            const trace = s.traces.get(stepData.agentId);
+            if (!trace) return s;
+
+            const newTraces = new Map(s.traces);
+            newTraces.set(stepData.agentId, {
+              ...trace,
+              steps: [...trace.steps, stepData],
+            });
+
+            return { traces: newTraces };
+          });
+          break;
+        }
+
+        case 'agent_trace_complete': {
+          const completeData = message.data;
+          set((s) => {
+            const trace = s.traces.get(completeData.agentId);
+            if (!trace) return s;
+
+            const newTraces = new Map(s.traces);
+            newTraces.set(completeData.agentId, {
+              ...trace,
+              status: completeData.status,
+              endTime: completeData.endTime,
+              duration: completeData.duration,
+              totalTokens: completeData.totalTokens,
+              error: completeData.error,
+            });
+
+            return { traces: newTraces };
+          });
+          break;
+        }
       }
     });
 
@@ -224,4 +301,17 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
     wsService.respondToConfirmation(confirmationId, response);
     set({ pendingConfirmation: null });
   },
+
+  selectAgent: (agentId: string | null) => {
+    set({ selectedAgentId: agentId });
+  },
 }));
+
+// Helper functions to build agent hierarchy
+export function getChildAgents(traces: Map<string, AgentTrace>, parentId: string): AgentTrace[] {
+  return Array.from(traces.values()).filter(trace => trace.parentId === parentId);
+}
+
+export function getRootAgents(traces: Map<string, AgentTrace>): AgentTrace[] {
+  return Array.from(traces.values()).filter(trace => trace.parentId === null);
+}

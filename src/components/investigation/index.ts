@@ -7,3 +7,4 @@ export { default as HypothesisTree } from './HypothesisTree';
 export { default as ConfirmationDialog } from './ConfirmationDialog';
 export { default as ActionProposalBar } from './ActionProposalBar';
 export { default as TopologyGraph } from './TopologyGraph';
+export { default as AgentTracePanel } from './AgentTracePanel';
