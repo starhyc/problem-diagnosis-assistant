@@ -3,6 +3,8 @@ from typing import List
 
 
 class Settings(BaseSettings):
+    model_config = {"env_file": ".env", "case_sensitive": False, "extra": "ignore"}
+
     ip: str = "0.0.0.0"
     port: int = 8000
     database_url: str = "sqlite:///./aiops.db"
@@ -15,10 +17,6 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     log_level: str = "INFO"
     log_file: str = "logs/aiops.log"
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
     @property
     def cors_origins_list(self) -> List[str]:
