@@ -23,6 +23,8 @@ export default function Investigation() {
   const [selectedModel, setSelectedModel] = useState<ModelType>('gpt-4');
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, File[]>>({});
   const [activeTab, setActiveTab] = useState<'agents' | 'timeline' | 'evidence'>('agents');
+  const [leftWidth, setLeftWidth] = useState(320);
+  const [rightWidth, setRightWidth] = useState(384);
   const { user } = useAuthStore();
   
   const {
@@ -79,6 +81,7 @@ export default function Investigation() {
 
       <div className="flex-1 flex overflow-hidden">
         <LeftPanel
+          width={leftWidth}
           selectedAgentType={selectedAgentType}
           onAgentTypeChange={setSelectedAgentType}
           selectedModel={selectedModel}
@@ -92,6 +95,8 @@ export default function Investigation() {
           onStartAnalysis={handleStartAnalysis}
           onStopAnalysis={handleStopAnalysis}
         />
+
+        <ResizeHandle onResize={(delta) => setLeftWidth(Math.max(200, Math.min(600, leftWidth + delta)))} />
 
         <CenterPanel
           activeTab={activeTab}
@@ -109,7 +114,9 @@ export default function Investigation() {
           sampleLogs={currentCase?.messages.find(m => m.type === 'evidence')?.content || ''}
         />
 
-        <div className="w-96 border-l border-border-subtle flex flex-col">
+        <ResizeHandle onResize={(delta) => setRightWidth(Math.max(200, Math.min(600, rightWidth - delta)))} />
+
+        <div style={{ width: rightWidth }} className="border-l border-border-subtle flex flex-col">
           <AgentTracePanel />
         </div>
       </div>
@@ -179,6 +186,7 @@ function Header({
 }
 
 function LeftPanel({
+  width,
   selectedAgentType,
   onAgentTypeChange,
   selectedModel,
@@ -192,6 +200,7 @@ function LeftPanel({
   onStartAnalysis,
   onStopAnalysis,
 }: {
+  width: number;
   selectedAgentType: AgentType;
   onAgentTypeChange: (type: AgentType) => void;
   selectedModel: ModelType;
@@ -206,7 +215,7 @@ function LeftPanel({
   onStopAnalysis: () => void;
 }) {
   return (
-    <div className="w-80 border-r border-border-subtle flex flex-col bg-bg-surface/50">
+    <div style={{ width }} className="border-r border-border-subtle flex flex-col bg-bg-surface/50">
       <AgentTypeSelector
         types={AGENT_TYPES}
         selectedType={selectedAgentType}
@@ -349,5 +358,34 @@ function RightPanel({
         )}
       </div>
     </div>
+  );
+}
+
+function ResizeHandle({ onResize }: { onResize: (delta: number) => void }) {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    let lastX = startX;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - lastX;
+      lastX = e.clientX;
+      onResize(delta);
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  return (
+    <div
+      onMouseDown={handleMouseDown}
+      className="w-1 hover:w-1.5 bg-border-subtle hover:bg-primary cursor-col-resize transition-all flex-shrink-0"
+    />
   );
 }
