@@ -96,7 +96,7 @@ export default function Investigation() {
           onStopAnalysis={handleStopAnalysis}
         />
 
-        <ResizeHandle onResize={(delta) => setLeftWidth(Math.max(200, Math.min(600, leftWidth + delta)))} />
+        <ResizeHandle currentWidth={leftWidth} onResize={(w) => setLeftWidth(Math.max(200, Math.min(600, w)))} />
 
         <CenterPanel
           activeTab={activeTab}
@@ -114,7 +114,7 @@ export default function Investigation() {
           sampleLogs={currentCase?.messages.find(m => m.type === 'evidence')?.content || ''}
         />
 
-        <ResizeHandle onResize={(delta) => setRightWidth(Math.max(200, Math.min(600, rightWidth - delta)))} />
+        <ResizeHandle currentWidth={rightWidth} onResize={(w) => setRightWidth(Math.max(200, Math.min(600, w)))} isReverse />
 
         <div style={{ width: rightWidth }} className="border-l border-border-subtle flex flex-col">
           <AgentTracePanel />
@@ -361,19 +361,24 @@ function RightPanel({
   );
 }
 
-function ResizeHandle({ onResize }: { onResize: (delta: number) => void }) {
+function ResizeHandle({ currentWidth, onResize, isReverse }: { currentWidth: number; onResize: (width: number) => void; isReverse?: boolean }) {
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    let lastX = startX;
+    const startWidth = currentWidth;
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
 
     const handleMouseMove = (e: MouseEvent) => {
-      const delta = e.clientX - lastX;
-      lastX = e.clientX;
-      onResize(delta);
+      const delta = e.clientX - startX;
+      const newWidth = isReverse ? startWidth - delta : startWidth + delta;
+      onResize(newWidth);
     };
 
     const handleMouseUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -385,7 +390,7 @@ function ResizeHandle({ onResize }: { onResize: (delta: number) => void }) {
   return (
     <div
       onMouseDown={handleMouseDown}
-      className="w-1 hover:w-1.5 bg-border-subtle hover:bg-primary cursor-col-resize transition-all flex-shrink-0"
+      className="w-1 hover:w-1.5 bg-border-subtle hover:bg-primary cursor-col-resize flex-shrink-0"
     />
   );
 }
