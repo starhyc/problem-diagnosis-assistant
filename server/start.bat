@@ -1,40 +1,39 @@
 @echo off
-chcp 65001 >nul
 echo ========================================
-echo AIOps 智能诊断平台 - 后端服务启动
+echo AIOps Diagnosis Platform - Backend Server
 echo ========================================
 echo.
 
-REM 检查 Python 是否安装
+REM Check if Python is installed
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] 未检测到 Python，请先安装 Python 3.8+
+    echo [ERROR] Python not detected. Please install Python 3.8+
     pause
     exit /b 1
 )
 
-echo [1/4] 检查虚拟环境...
+echo [1/4] Checking virtual environment...
 if not exist "venv" (
-    echo [信息] 创建虚拟环境...
+    echo [INFO] Creating virtual environment...
     python -m venv venv
 )
 
-echo [2/4] 激活虚拟环境...
+echo [2/4] Activating virtual environment...
 call venv\Scripts\activate.bat
 
-echo [3/4] 安装依赖...
+echo [3/4] Installing dependencies...
 pip install -r requirements.txt -q
 
-echo [4/4] 初始化数据库...
+echo [4/4] Initializing database...
 python init_db.py
 
 echo.
 echo ========================================
-echo 启动 FastAPI 服务器...
+echo Starting FastAPI server...
 echo ========================================
 echo.
-echo API 文档: http://localhost:8000/docs
-echo 按 Ctrl+C 停止服务器
+echo API Documentation: http://localhost:8000/docs
+echo Press Ctrl+C to stop the server
 echo.
 
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
