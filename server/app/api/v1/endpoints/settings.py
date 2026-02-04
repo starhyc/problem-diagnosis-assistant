@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
+from app.core.logging_config import get_logger
 from app.models.case import Setting
 from app.schemas.case import (
     SettingsDataResponse,
@@ -9,6 +10,7 @@ from app.schemas.case import (
 )
 from app.repositories.setting_repository import SettingRepository
 
+logger = get_logger(__name__)
 router = APIRouter()
 setting_repo = SettingRepository()
 
@@ -145,8 +147,10 @@ def get_settings():
 
 @router.put("/settings/redlines/{redline_id}")
 def update_redline(redline_id: str, enabled: bool):
+    logger.info(f"更新红线配置: redline_id={redline_id}, enabled={enabled}")
     redline = setting_repo.get_by_type_and_id("redline", redline_id)
     if not redline:
+        logger.warning(f"红线配置未找到: redline_id={redline_id}")
         raise HTTPException(status_code=404, detail="Redline not found")
 
     setting_repo.update(redline.id, enabled=enabled)

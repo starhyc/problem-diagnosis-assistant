@@ -3,7 +3,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import engine, Base
+from app.core.logging_config import setup_logging, get_logger
 from app.api.v1.api import api_router
+
+setup_logging(settings.log_level, settings.log_file)
+logger = get_logger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
@@ -26,6 +30,7 @@ app.include_router(api_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
+    logger.info("Root endpoint accessed")
     return {
         "message": "AIOps 智能诊断平台 API",
         "version": settings.app_version
@@ -39,11 +44,18 @@ async def health_check():
 
 @app.on_event("startup")
 async def startup_event():
-    print("=" * 50)
-    print("AIOps 智能诊断平台启动")
-    print(f"WebSocket 端点: ws://{settings.ip}:{settings.port}/api/v1/agent/ws")
-    print(f"API 文档: http://{settings.ip}:{settings.port}/docs")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("AIOps 智能诊断平台启动")
+    logger.info(f"WebSocket 端点: ws://{settings.ip}:{settings.port}/api/v1/agent/ws")
+    logger.info(f"API 文档: http://{settings.ip}:{settings.port}/docs")
+    logger.info(f"日志级别: {settings.log_level}")
+    logger.info(f"日志文件: {settings.log_file}")
+    logger.info("=" * 50)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("AIOps 智能诊断平台关闭")
 
 
 if __name__ == "__main__":

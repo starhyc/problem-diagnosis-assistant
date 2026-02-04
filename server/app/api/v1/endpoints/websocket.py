@@ -6,7 +6,9 @@ from datetime import datetime
 import uuid
 from app.services.diagnosis_agent import MockDiagnosisAgent
 from app.services.qa_agent import QAAgent
+from app.core.logging_config import get_logger
 
+logger = get_logger(__name__)
 router = APIRouter()
 
 diagnosis_agent = MockDiagnosisAgent()
@@ -25,23 +27,25 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, client_id: str):
         await websocket.accept()
         self.active_connections[client_id] = websocket
-        print(f"[WebSocket] Client {client_id} connected")
+        logger.info(f"WebSocket客户端已连接: {client_id}, 当前连接数: {len(self.active_connections)}")
 
     def disconnect(self, client_id: str):
         if client_id in self.active_connections:
             del self.active_connections[client_id]
-            print(f"[WebSocket] Client {client_id} disconnected")
+            logger.info(f"WebSocket客户端已断开: {client_id}, 当前连接数: {len(self.active_connections)}")
 
     async def send_message(self, client_id: str, message: dict):
         if client_id in self.active_connections:
             websocket = self.active_connections[client_id]
             try:
                 await websocket.send_json(message)
+                logger.debug(f"发送消息到 {client_id}: {message.get('type', 'unknown')}")
             except Exception as e:
-                print(f"[WebSocket] Failed to send message to {client_id}: {e}")
+                logger.error(f"发送消息失败 {client_id}: {e}")
                 self.disconnect(client_id)
 
     async def broadcast(self, message: dict):
+        logger.debug(f"广播消息到 {len(self.active_connections)} 个客户端")
         for connection in self.active_connections.values():
             await connection.send_json(message)
 
@@ -58,22 +62,26 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
-            
-            print(f"[WebSocket] Received from {client_id}: {message}")
-            
+
+            logger.info(f"收到WebSocket消息 [{client_id}]: type={message.get('type', 'unknown')}")
+            logger.debug(f"消息详情 [{client_id}]: {message}")
+
             await handle_message(client_id, message)
-            
+
     except WebSocketDisconnect:
+        logger.info(f"WebSocket正常断开: {client_id}")
         manager.disconnect(client_id)
     except Exception as e:
-        print(f"[WebSocket] Error for {client_id}: {e}")
+        logger.error(f"WebSocket错误 [{client_id}]: {e}", exc_info=True)
         manager.disconnect(client_id)
 
 
 async def handle_message(client_id: str, message: dict):
     message_type = message.get("type")
     data = message.get("data", {})
-    
+
+    logger.info(f"处理消息类型: {message_type} [{client_id}]")
+
     if message_type == "start_diagnosis":
         await start_diagnosis(client_id, data)
     elif message_type == "stop_diagnosis":
@@ -89,6 +97,7 @@ async def handle_message(client_id: str, message: dict):
     elif message_type == "confirmation_response":
         await handle_confirmation_response(client_id, data)
     else:
+        logger.warning(f"未知消息类型: {message_type} [{client_id}]")
         await send_error(client_id, f"Unknown message type: {message_type}")
 
 
@@ -110,18 +119,21 @@ async def start_diagnosis(client_id: str, data: dict):
     symptom = data.get("symptom", "")
     description = data.get("description", "")
     context = data.get("context", {})
-    
+
+    logger.info(f"开始诊断 [{client_id}]: agent={agent_type}, symptom={symptom}")
+
     agent = AGENT_REGISTRY.get(agent_type, diagnosis_agent)
-    
+
     async def callback(message: dict):
         if client_id in manager.active_connections:
             await manager.send_message(client_id, message)
-    
+
     try:
         async for event in agent.stream_diagnosis(symptom, description, callback, context):
             pass
+        logger.info(f"诊断完成 [{client_id}]: agent={agent_type}")
     except Exception as e:
-        print(f"[WebSocket] Error during {agent_type}: {e}")
+        logger.error(f"诊断失败 [{client_id}]: agent={agent_type}, error={e}", exc_info=True)
         if client_id in manager.active_connections:
             await send_error(client_id, f"{agent_type} failed: {str(e)}")
 

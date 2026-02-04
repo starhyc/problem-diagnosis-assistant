@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
+from app.core.logging_config import get_logger
 from app.models.case import KnowledgeNode, KnowledgeEdge, HistoricalCase
 from app.schemas.case import (
     KnowledgeDataResponse,
@@ -10,6 +11,7 @@ from app.schemas.case import (
 )
 from app.repositories.knowledge_repository import KnowledgeRepository
 
+logger = get_logger(__name__)
 router = APIRouter()
 knowledge_repo = KnowledgeRepository()
 
@@ -226,8 +228,10 @@ def get_historical_cases():
 
 @router.get("/cases/{case_id}", response_model=HistoricalCaseResponse)
 def get_historical_case(case_id: str):
+    logger.debug(f"查询历史案例: case_id={case_id}")
     case = knowledge_repo.get_historical_case_by_id(case_id)
     if not case:
+        logger.warning(f"历史案例未找到: case_id={case_id}")
         raise HTTPException(status_code=404, detail="Case not found")
 
     return HistoricalCaseResponse(

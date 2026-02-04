@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
+from app.core.logging_config import get_logger
 from app.models.case import Agent
 from app.schemas.case import (
     InvestigationDataResponse,
@@ -13,6 +14,7 @@ from app.schemas.case import (
 )
 from app.repositories.agent_repository import AgentRepository
 
+logger = get_logger(__name__)
 router = APIRouter()
 agent_repo = AgentRepository()
 
@@ -135,8 +137,10 @@ def get_investigation_data():
 @router.post("/start")
 def start_diagnosis(request: StartDiagnosisRequest):
     agent_type = request.agent_type or "diagnosis"
+    case_id = f"CASE-{agent_type.upper()}-{agent_repo.count() + 1}"
+    logger.info(f"启动诊断: case_id={case_id}, agent_type={agent_type}, symptom={request.symptom}")
     return {
-        "case_id": f"CASE-{agent_type.upper()}-{agent_repo.count() + 1}",
+        "case_id": case_id,
         "agent_type": agent_type,
         "status": "started",
         "message": f"{agent_type} 已启动",
@@ -159,9 +163,11 @@ def get_proposed_action():
 
 @router.post("/action/approve")
 def approve_action():
+    logger.info("操作已批准")
     return {"status": "approved", "message": "操作已批准"}
 
 
 @router.post("/action/reject")
 def reject_action():
+    logger.info("操作已拒绝")
     return {"status": "rejected", "message": "操作已拒绝"}

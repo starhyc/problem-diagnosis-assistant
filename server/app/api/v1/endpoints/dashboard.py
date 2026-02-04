@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
+from app.core.logging_config import get_logger
 from app.models.case import Case, Agent, SystemHealth, DashboardStats
 from app.schemas.case import (
     DashboardDataResponse,
@@ -13,6 +14,7 @@ from app.repositories.agent_repository import AgentRepository
 from app.repositories.system_health_repository import SystemHealthRepository
 from app.repositories.dashboard_stats_repository import DashboardStatsRepository
 
+logger = get_logger(__name__)
 router = APIRouter()
 case_repo = CaseRepository()
 agent_repo = AgentRepository()
@@ -22,10 +24,12 @@ stats_repo = DashboardStatsRepository()
 
 @router.get("", response_model=DashboardDataResponse)
 def get_dashboard_data():
+    logger.debug("获取仪表盘数据")
     stats = stats_repo.get_stats()
     cases = case_repo.get_recent_cases(limit=10)
     agents = agent_repo.get_active_agents()
     health_records = health_repo.get_all_health_records()
+    logger.debug(f"仪表盘数据: cases={len(cases)}, agents={len(agents)}, health={len(health_records)}")
 
     stats_response = DashboardStatsResponse(
         active_tasks=stats.active_tasks,

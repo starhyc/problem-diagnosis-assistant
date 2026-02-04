@@ -2,7 +2,10 @@ from typing import AsyncIterator, Dict, Any, Optional
 from datetime import datetime
 import asyncio
 import uuid
+from app.core.logging_config import get_logger
 from app.services.agent_base import BaseAgent
+
+logger = get_logger(__name__)
 
 
 class MockDiagnosisAgent(BaseAgent):
@@ -26,6 +29,7 @@ class MockDiagnosisAgent(BaseAgent):
         callback: callable,
         context: Optional[Dict[str, Any]] = None
     ) -> AsyncIterator[Dict[str, Any]]:
+        logger.info(f"开始诊断流程: symptom={symptom}, description={description[:50] if description else 'None'}")
         self.pending_confirmation = None
         self.confirmation_result = None
         self.paused_for_confirmation = False
@@ -508,5 +512,6 @@ class MockDiagnosisAgent(BaseAgent):
         
         await callback(completion_status)
         yield completion_status
-        
+
+        logger.info(f"诊断流程完成: symptom={symptom}")
         self.is_running = False

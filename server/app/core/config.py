@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = True
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    log_level: str = "INFO"
+    log_file: str = "logs/aiops.log"
 
     class Config:
         env_file = ".env"
