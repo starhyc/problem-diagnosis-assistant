@@ -138,7 +138,7 @@ def get_investigation_data():
 def start_diagnosis(request: StartDiagnosisRequest):
     agent_type = request.agent_type or "diagnosis"
     case_id = f"CASE-{agent_type.upper()}-{agent_repo.count() + 1}"
-    logger.info(f"启动诊断: case_id={case_id}, agent_type={agent_type}, symptom={request.symptom}")
+    logger.info(f"启动诊断: case_id={case_id}, agent_type={agent_type}, problem={request.problem_description}")
     return {
         "case_id": case_id,
         "agent_type": agent_type,
