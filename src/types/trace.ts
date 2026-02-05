@@ -52,4 +52,6 @@ export interface AgentTrace {
   };
   steps: ExecutionStep[];
   error?: string;
+  taskDescription?: string;
+  subtasks?: { completed: number; total: number };
 }

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { memo, useState } from 'react';
+import { ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import { AgentTrace, ExecutionStep } from '../../types/trace';
 
 interface ExecutionTimelineProps {
@@ -28,11 +28,35 @@ export default function ExecutionTimeline({ trace }: ExecutionTimelineProps) {
 }
 
 function MetricsPanel({ trace }: { trace: AgentTrace }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(trace.taskDescription || trace.name);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
   return (
     <div className="p-4 border-b border-border-subtle bg-bg-surface">
-      <h3 className="text-sm font-semibold text-text-main mb-3">
-        {trace.name} <span className="text-text-muted text-xs">({trace.id})</span>
-      </h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-text-main">
+          {trace.name} <span className="text-text-muted text-xs">({trace.id})</span>
+        </h3>
+        <button
+          onClick={handleCopy}
+          className="p-1.5 hover:bg-bg-elevated rounded transition-colors"
+          title="Copy task"
+        >
+          <Copy className="w-4 h-4 text-text-muted" />
+        </button>
+      </div>
+      {copied && (
+        <div className="text-xs text-semantic-success mb-2">Copied to clipboard!</div>
+      )}
       <div className="grid grid-cols-4 gap-3">
         <MetricCard label="状态" value={getStatusLabel(trace.status)} />
         <MetricCard label="总耗时" value={trace.duration ? formatDuration(trace.duration) : '-'} />
@@ -52,7 +76,7 @@ function MetricCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StepItem({ step }: { step: ExecutionStep }) {
+const StepItem = memo(({ step }: { step: ExecutionStep }) => {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -137,7 +161,9 @@ function StepItem({ step }: { step: ExecutionStep }) {
       </div>
     </div>
   );
-}
+}, (prev, next) => prev.step === next.step);
+
+StepItem.displayName = 'StepItem';
 
 function CollapsibleSection({
   title,
@@ -228,7 +254,7 @@ function getStatusLabel(status: string): string {
 
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp);
-  return date.toLocaleTimeString('en-US', { hour12: false });
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 function formatDuration(ms: number): string {
