@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useState, useMemo, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import { AgentTrace, ExecutionStep } from '../../types/trace';
 
@@ -29,6 +29,20 @@ export default function ExecutionTimeline({ trace }: ExecutionTimelineProps) {
 
 function MetricsPanel({ trace }: { trace: AgentTrace }) {
   const [copied, setCopied] = useState(false);
+  const [, setTick] = useState(0);
+
+  // Calculate accumulated tokens with useMemo
+  const accumulatedTokens = useMemo(() => accumulateTokens(trace.steps), [trace.steps]);
+
+  // Auto-update elapsed time every second for running agents
+  useEffect(() => {
+    if (trace.status === 'running') {
+      const interval = setInterval(() => {
+        setTick((t) => t + 1);
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [trace.status]);
 
   const handleCopy = async () => {
     try {
@@ -39,6 +53,18 @@ function MetricsPanel({ trace }: { trace: AgentTrace }) {
       console.error('Failed to copy:', err);
     }
   };
+
+  // Use calculated elapsed time for running agents, fall back to trace.duration when completed
+  const displayDuration = trace.status === 'running' && trace.startTime
+    ? formatDuration(calculateElapsedTime(trace.startTime))
+    : trace.duration
+    ? formatDuration(trace.duration)
+    : '-';
+
+  // Use accumulated tokens for running agents, fall back to trace.totalTokens when completed
+  const displayTokens = trace.status === 'running'
+    ? accumulatedTokens
+    : trace.totalTokens;
 
   return (
     <div className="p-4 border-b border-border-subtle bg-bg-surface">
@@ -59,9 +85,9 @@ function MetricsPanel({ trace }: { trace: AgentTrace }) {
       )}
       <div className="grid grid-cols-4 gap-3">
         <MetricCard label="状态" value={getStatusLabel(trace.status)} />
-        <MetricCard label="总耗时" value={trace.duration ? formatDuration(trace.duration) : '-'} />
-        <MetricCard label="Input Token" value={trace.totalTokens.input.toLocaleString()} />
-        <MetricCard label="Output Token" value={trace.totalTokens.output.toLocaleString()} />
+        <MetricCard label="总耗时" value={displayDuration} />
+        <MetricCard label="Input Token" value={displayTokens.input.toLocaleString()} />
+        <MetricCard label="Output Token" value={displayTokens.output.toLocaleString()} />
       </div>
     </div>
   );
@@ -260,4 +286,21 @@ function formatTimestamp(timestamp: string): string {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function calculateElapsedTime(startTime: string): number {
+  return Date.now() - new Date(startTime).getTime();
+}
+
+function accumulateTokens(steps: ExecutionStep[]): { input: number; output: number } {
+  return steps.reduce(
+    (acc, step) => {
+      if (step.tokens) {
+        acc.input += step.tokens.input;
+        acc.output += step.tokens.output;
+      }
+      return acc;
+    },
+    { input: 0, output: 0 }
+  );
 }

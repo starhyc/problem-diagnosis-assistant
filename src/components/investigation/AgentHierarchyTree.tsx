@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { useState } from 'react';
 import { CheckCircle2, Circle, Loader2, XCircle, ChevronRight } from 'lucide-react';
 import { AgentTrace, AgentStatus } from '../../types/trace';
 import { getChildAgents } from '../../store/diagnosisStore';
@@ -43,8 +43,10 @@ interface AgentNodeProps {
   level: number;
 }
 
-const AgentNode = memo(({ trace, traces, selectedAgentId, onSelectAgent, level }: AgentNodeProps) => {
-  const [collapsed, setCollapsed] = useState(level >= 2);
+function AgentNode({ trace, traces, selectedAgentId, onSelectAgent, level }: AgentNodeProps) {
+  const [collapsed, setCollapsed] = useState(
+    trace.status === 'running' ? false : level >= 2
+  );
   const children = getChildAgents(traces, trace.id);
   const isSelected = selectedAgentId === trace.id;
 
@@ -107,13 +109,7 @@ const AgentNode = memo(({ trace, traces, selectedAgentId, onSelectAgent, level }
       ))}
     </div>
   );
-}, (prev, next) => {
-  return prev.trace.status === next.trace.status &&
-         prev.trace.duration === next.trace.duration &&
-         prev.selectedAgentId === next.selectedAgentId;
-});
-
-AgentNode.displayName = 'AgentNode';
+}
 
 function StatusIcon({ status }: { status: AgentStatus }) {
   switch (status) {
@@ -125,6 +121,19 @@ function StatusIcon({ status }: { status: AgentStatus }) {
       return <XCircle className="w-4 h-4 text-semantic-danger" />;
     default:
       return <Circle className="w-4 h-4 text-text-muted" />;
+  }
+}
+
+function getStatusLabel(status: string): string {
+  switch (status) {
+    case 'success':
+      return '✅ Success';
+    case 'failed':
+      return '❌ Failed';
+    case 'running':
+      return '⏳ Running';
+    default:
+      return '⏸️ Pending';
   }
 }
 
