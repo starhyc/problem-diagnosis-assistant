@@ -51,47 +51,47 @@ const AgentNode = memo(({ trace, traces, selectedAgentId, onSelectAgent, level }
   return (
     <div>
       <div
-        className={`px-2 py-1.5 rounded cursor-pointer hover:bg-bg-elevated transition-colors ${
+        className={`rounded transition-colors ${
           isSelected ? 'bg-bg-elevated' : ''
         }`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
-        onClick={() => onSelectAgent(trace.id)}
       >
-        <div className="flex items-center gap-2">
-          {children.length > 0 && (
+        <div className="flex items-start gap-1 px-2 py-1.5">
+          {children.length > 0 ? (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setCollapsed(!collapsed);
               }}
-              className="p-0.5 hover:bg-bg-elevated rounded"
+              className="p-1 hover:bg-bg-elevated rounded flex-shrink-0"
             >
               <ChevronRight className={`w-3 h-3 text-text-muted transition-transform ${collapsed ? '' : 'rotate-90'}`} />
             </button>
+          ) : (
+            <div className="w-5" />
           )}
-          <StatusIcon status={trace.status} />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-text-main">{trace.name}</span>
-              {trace.duration !== undefined && (
-                <span className="text-xs text-text-muted">{formatDuration(trace.duration)}</span>
-              )}
-              {isSelected && <CheckCircle2 className="w-4 h-4 text-primary" />}
+          <div className="flex-1 min-w-0 cursor-pointer" onClick={() => onSelectAgent(trace.id)}>
+            <div className="flex items-center gap-2 mb-1">
+              <StatusIcon status={trace.status} />
+              <span className="text-sm font-medium text-text-main">{trace.name}</span>
+              {isSelected && <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />}
             </div>
-            <div className="text-xs text-text-muted font-mono">{trace.id.substring(0, 8)}</div>
+            <div className="text-xs text-text-muted font-mono mb-1">{trace.id.substring(0, 8)}</div>
+            <div className="text-xs text-text-muted mb-1">
+              {getStatusLabel(trace.status)}
+              {trace.duration !== undefined && ` • ${formatDuration(trace.duration)}`}
+            </div>
             {trace.taskDescription && (
-              <div className="text-xs text-text-muted mt-1 line-clamp-2">{trace.taskDescription}</div>
+              <div className="text-xs text-text-muted mb-1 line-clamp-2">{trace.taskDescription}</div>
             )}
-            <div className="flex items-center gap-3 mt-1">
-              <span className="text-xs text-text-muted">
-                ↑{trace.totalTokens.input.toLocaleString()} ↓{trace.totalTokens.output.toLocaleString()}
-              </span>
-              {trace.subtasks && (
-                <span className="text-xs text-text-muted">
-                  {trace.subtasks.completed}/{trace.subtasks.total} subtasks
-                </span>
-              )}
+            <div className="text-xs text-text-muted">
+              Tokens: ↑{trace.totalTokens.input.toLocaleString()} ↓{trace.totalTokens.output.toLocaleString()}
             </div>
+            {trace.subtasks && (
+              <div className="text-xs text-text-muted">
+                {trace.subtasks.completed}/{trace.subtasks.total} subtasks
+              </div>
+            )}
           </div>
         </div>
       </div>
