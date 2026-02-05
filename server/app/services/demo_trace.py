@@ -15,7 +15,7 @@ class DemoTraceGenerator:
 
         # Root agent: plan-agent
         plan_agent_id = f"ag_{uuid.uuid4().hex[:8]}"
-        await self._send_trace_start(plan_agent_id, "plan-agent", None)
+        await self._send_trace_start(plan_agent_id, "plan-agent", None, "诊断MySQL连接池耗尽问题", {"completed": 0, "total": 2})
 
         # Plan agent receives task
         await self._send_step(plan_agent_id, "task_received", {
@@ -41,7 +41,7 @@ class DemoTraceGenerator:
         await asyncio.sleep(0.3)
 
         # Sub-agent-1 starts
-        await self._send_trace_start(sub_agent_1_id, "sub-agent-1", plan_agent_id)
+        await self._send_trace_start(sub_agent_1_id, "sub-agent-1", plan_agent_id, "查询数据库连接池状态")
 
         # Sub-agent-1 receives task
         await self._send_step(sub_agent_1_id, "task_received", {
@@ -85,7 +85,7 @@ class DemoTraceGenerator:
         await asyncio.sleep(0.3)
 
         # Sub-agent-2 starts
-        await self._send_trace_start(sub_agent_2_id, "sub-agent-2", plan_agent_id)
+        await self._send_trace_start(sub_agent_2_id, "sub-agent-2", plan_agent_id, "分析应用日志")
 
         # Sub-agent-2 receives task
         await self._send_step(sub_agent_2_id, "task_received", {
@@ -131,16 +131,21 @@ class DemoTraceGenerator:
             "output": 445
         })
 
-    async def _send_trace_start(self, agent_id: str, agent_name: str, parent_id: str = None):
+    async def _send_trace_start(self, agent_id: str, agent_name: str, parent_id: str = None, task_description: str = None, subtasks: Dict[str, int] = None):
         """Send agent_trace_start message"""
+        data = {
+            "agentId": agent_id,
+            "agentName": agent_name,
+            "parentId": parent_id,
+            "startTime": self._get_timestamp()
+        }
+        if task_description:
+            data["taskDescription"] = task_description
+        if subtasks:
+            data["subtasks"] = subtasks
         await self.ws_send({
             "type": "agent_trace_start",
-            "data": {
-                "agentId": agent_id,
-                "agentName": agent_name,
-                "parentId": parent_id,
-                "startTime": self._get_timestamp()
-            }
+            "data": data
         })
 
     async def _send_step(self, agent_id: str, step_type: str, step_data: Dict[str, Any]):
@@ -151,8 +156,8 @@ class DemoTraceGenerator:
             "type": "agent_trace_step",
             "data": {
                 "agentId": agent_id,
-                "stepId": step_id,
-                "stepType": step_type,
+                "id": step_id,
+                "type": step_type,
                 "timestamp": self._get_timestamp(),
                 **step_data
             }

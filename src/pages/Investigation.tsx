@@ -15,6 +15,7 @@ import {
   TopologyGraph,
   AgentTracePanel,
 } from '../components/investigation';
+import GlobalTimeline from '../components/investigation/GlobalTimeline';
 import { Tabs } from '../components/common';
 
 export default function Investigation() {
@@ -41,6 +42,7 @@ export default function Investigation() {
     initializeWebSocket,
     disconnectWebSocket,
     currentAgentType: storeAgentType,
+    traces,
   } = useDiagnosisStore();
 
   const currentAgentConfig = AGENT_TYPES.find(t => t.id === selectedAgentType);
@@ -112,6 +114,7 @@ export default function Investigation() {
           })) : []}
           isRunning={isRunning}
           sampleLogs={currentCase?.messages.find(m => m.type === 'evidence')?.content || ''}
+          traces={traces}
         />
 
         <ResizeHandle currentWidth={rightWidth} onResize={(w) => setRightWidth(Math.max(200, Math.min(600, w)))} isReverse />
@@ -295,6 +298,7 @@ function CenterPanel({
   agents,
   isRunning,
   sampleLogs,
+  traces,
 }: {
   activeTab: string;
   onTabChange: (tab: string) => void;
@@ -303,6 +307,7 @@ function CenterPanel({
   agents: any[];
   isRunning: boolean;
   sampleLogs: string;
+  traces: Map<string, any>;
 }) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -310,16 +315,12 @@ function CenterPanel({
 
       <div className="flex-1 overflow-auto">
         {activeTab === 'agents' && (
-          <AgentCollaborationPanel 
-            messages={currentCase?.messages || []} 
-            agents={agents}
-            isRunning={isRunning}
-          />
+          <GlobalTimeline traces={traces} />
         )}
         {activeTab === 'timeline' && (
-          <DiagnosisTimeline 
-            timeline={currentCase?.timeline || []} 
-            agents={agents} 
+          <DiagnosisTimeline
+            timeline={currentCase?.timeline || []}
+            agents={agents}
           />
         )}
         {activeTab === 'evidence' && (

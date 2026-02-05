@@ -191,6 +191,15 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
 
         case 'agent_trace_step': {
           const stepData = message.data;
+          // Map backend field names to frontend types
+          const mappedStep = {
+            ...stepData,
+            id: stepData.id || stepData.stepId,
+            type: stepData.type || stepData.stepType,
+          };
+          delete mappedStep.stepId;
+          delete mappedStep.stepType;
+
           set((s) => {
             const trace = s.traces.get(stepData.agentId);
             if (!trace) return s;
@@ -198,7 +207,7 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
             const newTraces = new Map(s.traces);
             newTraces.set(stepData.agentId, {
               ...trace,
-              steps: [...trace.steps, stepData],
+              steps: [...trace.steps, mappedStep],
             });
 
             return { traces: newTraces };
