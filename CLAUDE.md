@@ -126,21 +126,73 @@ All TypeScript types are centralized in `src/types/`:
 
 ### Backend Structure
 
-FastAPI backend (`server/`) with JWT authentication:
-- `app/api/v1/endpoints/` - API route handlers
-- `app/core/` - Configuration, database, security (JWT, bcrypt)
-- `app/models/` - SQLAlchemy ORM models
-- `app/schemas/` - Pydantic validation schemas
-- `app/services/` - Business logic layer (diagnosis agents, LangChain integration)
-- `app/repositories/` - Data access layer
-- `main.py` - Application entry point with CORS configuration
+Production-ready FastAPI backend with distributed task processing:
 
-### Agent System (LangChain)
+**Core Infrastructure:**
+- `app/core/celery_app.py` - Celery configuration for distributed tasks
+- `app/core/redis_client.py` - Redis connection pool (singleton)
+- `app/core/session_manager.py` - Redis-backed session management
+- `app/core/event_publisher.py` - Redis Pub/Sub event publishing
+- `app/core/event_subscriber.py` - Redis Pub/Sub event subscription
+- `app/core/llm_factory.py` - Multi-provider LLM factory with fallback
+- `app/core/tool_registry.py` - Tool registration and agent-tool mapping
+- `app/core/database.py` - PostgreSQL connection with async support
 
-The backend uses LangChain for multi-agent diagnosis workflows:
-- `langchain==0.3.0` and `langchain-openai==0.2.0` for agent orchestration
-- Agents communicate via WebSocket to stream real-time updates to frontend
-- Service layer (`app/services/`) contains agent implementations
+**Agent System:**
+- `app/services/agents/base_agent.py` - BaseAgent with timeout and retry logic
+- `app/services/agents/coordinator_agent.py` - Orchestration agent
+- `app/services/agents/log_agent.py` - Log analysis agent
+- `app/services/agents/code_agent.py` - Code analysis agent
+- `app/services/agents/knowledge_agent.py` - Knowledge graph agent
+- `app/services/agents/metric_agent.py` - Metrics analysis agent
+
+**Workflow & State:**
+- `app/services/workflow_engine.py` - LangGraph workflow orchestration
+- `app/services/state_manager.py` - Hybrid state management (memory + snapshots + events)
+- `app/tasks/diagnosis_tasks.py` - Celery tasks for async diagnosis
+
+**API & WebSocket:**
+- `app/api/v1/endpoints/websocket.py` - WebSocket with Redis Pub/Sub integration
+- `app/api/v1/endpoints/investigation.py` - REST API for diagnosis control
+- `app/api/v1/endpoints/health.py` - Health checks for Celery, Redis, PostgreSQL
+
+**Tools:**
+- `app/tools/base_tools.py` - ELK query, Git search, DB query tools
+- `app/schemas/events.py` - Event type definitions for event sourcing
+
+### Multi-Agent Architecture
+
+**LangChain 0.3+ Integration:**
+- Agents use `langchain_core.tools.BaseTool` for tool integration
+- LLM provider abstraction supports OpenAI, Anthropic, Azure OpenAI
+- Automatic fallback chain with retry logic and exponential backoff
+- Token usage tracking and cost estimation
+
+**LangGraph 0.2+ Workflows:**
+- Simple mode: Centralized coordination with sequential execution
+- Complex mode: StateGraph DAG with parallel execution and conditional routing
+- Workflow control: pause, resume, cancel operations
+- Event publication at node entry/exit for observability
+
+**State Management:**
+- In-memory: Active workflow state for fast access
+- Snapshots: Periodic persistence to PostgreSQL JSONB columns
+- Event sourcing: Complete event log with sequence numbers and causal tracking
+- State recovery: Replay events from snapshots for fault tolerance
+
+**Distributed Task Processing:**
+- Celery 5.4+ with Redis broker for background task execution
+- Task retry with exponential backoff (max 3 retries)
+- Task timeout handling (default 30 minutes)
+- Progress publishing to Redis Pub/Sub for real-time updates
+- Task result persistence to agent_executions table
+
+**Real-Time Communication:**
+- WebSocket connections with Redis Pub/Sub for multi-instance support
+- Session-based event subscription on diagnosis start
+- Heartbeat mechanism (30s intervals) for connection keep-alive
+- Automatic event forwarding from Redis to WebSocket clients
+- Connection recovery with missed event replay
 
 ## Important Patterns
 

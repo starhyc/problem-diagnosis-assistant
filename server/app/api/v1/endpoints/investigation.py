@@ -13,6 +13,9 @@ from app.schemas.case import (
     DiagnosisActionResponse,
 )
 from app.repositories.agent_repository import AgentRepository
+from app.tasks.diagnosis_tasks import run_diagnosis
+from app.core.session_manager import session_manager
+import uuid
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -136,20 +139,48 @@ def get_investigation_data():
 
 @router.post("/start")
 def start_diagnosis(request: StartDiagnosisRequest):
-    agent_type = request.agent_type or "diagnosis"
-    case_id = f"CASE-{agent_type.upper()}-{agent_repo.count() + 1}"
-    logger.info(f"启动诊断: case_id={case_id}, agent_type={agent_type}, problem={request.problem_description}")
-    return {
-        "case_id": case_id,
-        "agent_type": agent_type,
-        "status": "started",
-        "message": f"{agent_type} 已启动",
-    }
+    session_id = str(uuid.uuid4())
+    mode = request.mode if hasattr(request, 'mode') else "simple"
+
+    logger.info(f"Starting diagnosis: session_id={session_id}, problem={request.problem_description}")
+
+    try:
+        # Submit Celery task
+        task = run_diagnosis.delay(session_id, request.problem_description, mode)
+
+        return {
+            "session_id": session_id,
+            "task_id": task.id,
+            "status": "submitted",
+            "message": "Diagnosis task submitted"
+        }
+    except Exception as e:
+        logger.error(f"Failed to start diagnosis: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start diagnosis: {str(e)}")
 
 
 @router.post("/stop")
-def stop_diagnosis():
-    return {"status": "stopped", "message": "诊断已停止"}
+def stop_diagnosis(session_id: str):
+    from app.services.workflow_engine import workflow_engine
+    success = workflow_engine.cancel_workflow(session_id)
+
+    if success:
+        return {"status": "stopped", "session_id": session_id, "message": "Diagnosis stopped"}
+    else:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/task/{task_id}")
+def get_task_status(task_id: str):
+    from celery.result import AsyncResult
+    result = AsyncResult(task_id)
+
+    return {
+        "task_id": task_id,
+        "status": result.state,
+        "result": result.result if result.ready() else None,
+        "info": result.info
+    }
 
 
 @router.get("/action", response_model=DiagnosisActionResponse)
@@ -162,12 +193,12 @@ def get_proposed_action():
 
 
 @router.post("/action/approve")
-def approve_action():
-    logger.info("操作已批准")
-    return {"status": "approved", "message": "操作已批准"}
+def approve_action(session_id: str, action_id: str):
+    logger.info(f"Action approved: session_id={session_id}, action_id={action_id}")
+    return {"status": "approved", "session_id": session_id, "action_id": action_id}
 
 
 @router.post("/action/reject")
-def reject_action():
-    logger.info("操作已拒绝")
-    return {"status": "rejected", "message": "操作已拒绝"}
+def reject_action(session_id: str, action_id: str, reason: str = ""):
+    logger.info(f"Action rejected: session_id={session_id}, action_id={action_id}, reason={reason}")
+    return {"status": "rejected", "session_id": session_id, "action_id": action_id, "reason": reason}

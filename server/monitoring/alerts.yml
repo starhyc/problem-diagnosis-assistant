@@ -1,0 +1,67 @@
+groups:
+  - name: celery_alerts
+    interval: 30s
+    rules:
+      - alert: CeleryTaskFailureRate
+        expr: rate(celery_task_failed_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Celery task failure rate"
+          description: "Task failure rate is {{ $value }} per second"
+
+      - alert: CeleryTaskTimeout
+        expr: celery_task_timeout_total > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery tasks timing out"
+          description: "{{ $value }} tasks have timed out"
+
+      - alert: CeleryNoWorkers
+        expr: celery_workers == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Celery workers available"
+
+  - name: redis_alerts
+    interval: 30s
+    rules:
+      - alert: RedisHighMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+
+  - name: postgres_alerts
+    interval: 30s
+    rules:
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+
+      - alert: PostgresHighConnections
+        expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connection pool near limit"

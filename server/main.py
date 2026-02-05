@@ -42,6 +42,33 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/health/db")
+async def health_check_db():
+    """Database health check endpoint"""
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
+
+
+@app.get("/health/redis")
+async def health_check_redis():
+    """Redis health check endpoint"""
+    try:
+        from app.core.redis_client import redis_client
+        if redis_client.health_check():
+            return {"status": "healthy", "redis": "connected"}
+        else:
+            return {"status": "unhealthy", "redis": "disconnected"}
+    except Exception as e:
+        logger.error(f"Redis health check failed: {e}")
+        return {"status": "unhealthy", "redis": "disconnected", "error": str(e)}
+
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("=" * 50)

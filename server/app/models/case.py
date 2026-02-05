@@ -115,6 +115,7 @@ class AgentConfig(Base):
     description = Column(Text, nullable=True)
     config_schema = Column(Text, nullable=True)
     default_config = Column(Text, nullable=True)
+    tool_names = Column(Text, nullable=True)  # JSON array of tool names
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
