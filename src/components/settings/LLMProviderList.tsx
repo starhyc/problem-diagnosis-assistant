@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import { useSettingsStore } from '@/store/settingsStore';
 import { LLMProvider } from '@/types/settings';
-import { Button } from '@/components/common/Button';
-import { Card } from '@/components/common/Card';
-import { Badge } from '@/components/common/Badge';
+import { Button, Card, Badge } from '@/components/common';
 import { LLMProviderForm } from './LLMProviderForm';
 
 export function LLMProviderList() {
