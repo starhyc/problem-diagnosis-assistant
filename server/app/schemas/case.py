@@ -172,8 +172,7 @@ class LLMProviderRequest(BaseModel):
     api_key: str
     base_url: Optional[str] = None
     models: Optional[List[str]] = None
-    is_primary: bool = False
-    is_fallback: bool = False
+    is_default: bool = False
 
 
 class LLMProviderResponse(BaseModel):
@@ -183,8 +182,7 @@ class LLMProviderResponse(BaseModel):
     api_key: str  # Will be decrypted for display
     base_url: Optional[str] = None
     models: List[str]
-    is_primary: bool
-    is_fallback: bool
+    is_default: bool
     enabled: bool
 
 
@@ -193,8 +191,7 @@ class LLMProviderUpdateRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     models: Optional[List[str]] = None
-    is_primary: Optional[bool] = None
-    is_fallback: Optional[bool] = None
+    is_default: Optional[bool] = None
     enabled: Optional[bool] = None
 
 
