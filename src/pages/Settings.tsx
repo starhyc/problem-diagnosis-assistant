@@ -3,7 +3,7 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useAuthStore } from '@/store/authStore';
 import { LLMProviderList } from '@/components/settings/LLMProviderList';
 import { DatabaseConfig } from '@/components/settings/DatabaseConfig';
-import { ToolList } from '@/components/settings/ToolList';
+import ToolList from '@/components/settings/ToolList';
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<'llm' | 'database' | 'tools'>('llm');
