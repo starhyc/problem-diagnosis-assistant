@@ -14,6 +14,7 @@ interface SettingsState {
   deleteLLMProvider: (id: string) => Promise<void>;
   testLLMProvider: (id: string) => Promise<TestResult>;
   fetchModels: (id: string) => Promise<string[]>;
+  discoverModels: (config: { provider: string; api_key: string; base_url?: string }) => Promise<string[]>;
 
   loadTools: () => Promise<void>;
   testTool: (id: string) => Promise<TestResult>;
@@ -80,6 +81,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   fetchModels: async (id) => {
     return await settingsApi.fetchModels(id);
+  },
+
+  discoverModels: async (config) => {
+    return await settingsApi.discoverModels(config);
   },
 
   loadTools: async () => {

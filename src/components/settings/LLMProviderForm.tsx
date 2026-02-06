@@ -9,7 +9,7 @@ interface LLMProviderFormProps {
 }
 
 export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
-  const { addLLMProvider, updateLLMProvider, fetchModels } = useSettingsStore();
+  const { addLLMProvider, updateLLMProvider, fetchModels, discoverModels } = useSettingsStore();
   const [formData, setFormData] = useState({
     name: '',
     provider: 'openai',
@@ -73,67 +73,56 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
 
   // Check if auto-discovery should be triggered
   const shouldTriggerAutoDiscover = (): boolean => {
-    // Only auto-discover for existing providers (already saved)
-    if (!provider?.id) return false;
-
     // API key is required
     if (!formData.api_key.trim()) return false;
 
     // Check by provider type
     if (formData.provider === 'openai') {
-      // OpenAI only needs API key
       return true;
     } else if (formData.provider === 'anthropic') {
-      // Anthropic doesn't support auto-discovery (uses predefined models)
-      return false;
+      return true; // Anthropic returns predefined models
     } else if (formData.provider === 'azure' || formData.provider === 'custom') {
-      // Azure and Custom need both API key and base URL
       return formData.base_url.trim().length > 0;
     }
 
     return false;
   };
 
-  // Auto-discover models for existing provider
+  // Auto-discover models
   const autoDiscoverModels = async () => {
-    if (!provider?.id) return;
-
     setDiscovering(true);
     setDiscoverError(null);
     setAvailableModels([]);
 
     try {
-      const models = await fetchModels(provider.id);
+      let models: string[];
+
+      if (provider?.id) {
+        // Existing provider: use saved config
+        models = await fetchModels(provider.id);
+      } else {
+        // New provider: use current form data
+        models = await discoverModels({
+          provider: formData.provider,
+          api_key: formData.api_key,
+          base_url: formData.base_url || undefined,
+        });
+      }
+
       setAvailableModels(models);
       if (models.length > 0) {
         setShowModelDropdown(true);
       }
     } catch (error: any) {
-      const isCorsError = error.message?.includes('Failed to fetch') ||
-                         error.message?.includes('TypeError');
-
-      let errorMsg = `模型发现失败: ${error.message}`;
-
-      if (isCorsError) {
-        // Provide helpful error message for CORS issues
-        errorMsg += ' (CORS 错误: 该端点可能不支持浏览器直接访问)';
-      }
-
-      setDiscoverError(errorMsg);
+      setDiscoverError(`模型发现失败: ${error.message}`);
       setShowModelDropdown(false);
     } finally {
       setDiscovering(false);
     }
   };
 
-  // Manual trigger for existing providers (preserve backward compatibility)
+  // Manual trigger for model discovery
   const handleDiscoverModels = async () => {
-    if (!provider?.id) {
-      // For new providers, save first then discover
-      alert('请先保存提供商配置，然后在编辑模式下点击自动发现');
-      return;
-    }
-
     await autoDiscoverModels();
   };
 
@@ -248,22 +237,20 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
           <div className="flex justify-between items-center mb-2">
             <label className="block text-sm font-medium text-text-main">模型列表</label>
             <div className="flex gap-2 items-center">
-              {provider && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  onClick={handleDiscoverModels}
-                  disabled={discovering}
-                >
-                  {discovering ? '发现中...' : '自动发现'}
-                </Button>
-              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={handleDiscoverModels}
+                disabled={discovering || !shouldTriggerAutoDiscover()}
+              >
+                {discovering ? '发现中...' : '自动发现'}
+              </Button>
             </div>
           </div>
 
           {/* Auto-discovery progress indicator */}
-          {provider && discovering && (
+          {discovering && (
             <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
               正在发现可用模型...
             </div>
@@ -284,7 +271,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
           )}
 
           {/* Available Models Dropdown */}
-          {availableModels.length > 0 && provider && (
+          {availableModels.length > 0 && (
             <div className="mb-3 relative">
               <label className="block text-sm font-medium text-text-main mb-2">
                 可用模型 (点击添加到列表)

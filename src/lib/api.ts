@@ -351,6 +351,14 @@ export const settingsApi = {
     });
   },
 
+  async discoverModels(config: { provider: string; api_key: string; base_url?: string }): Promise<string[]> {
+    const response = await request<{ models: string[] }>('/settings/llm-providers/discover-models', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+    return response.models;
+  },
+
   async getDatabases(): Promise<any[]> {
     return request('/settings/databases');
   },

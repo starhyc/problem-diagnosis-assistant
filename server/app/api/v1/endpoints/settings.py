@@ -289,3 +289,40 @@ def get_llm_provider_models(provider_id: str, user: UserResponse = Depends(admin
     except Exception as e:
         logger.error(f"Model discovery failed for {provider_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch models: {str(e)}")
+
+
+@router.post("/llm-providers/discover-models", response_model=ModelListResponse)
+def discover_models_with_config(data: dict, user: UserResponse = Depends(admin_required)):
+    """Discover models using temporary configuration (for new providers)"""
+    provider_type = data.get("provider")
+    api_key = data.get("api_key")
+    base_url = data.get("base_url")
+
+    if not provider_type or not api_key:
+        raise HTTPException(status_code=400, detail="provider and api_key are required")
+
+    try:
+        if provider_type == "openai" or provider_type == "custom":
+            import requests
+            url = f"{base_url or 'https://api.openai.com/v1'}/models"
+            headers = {"Authorization": f"Bearer {api_key}"}
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            models = [model["id"] for model in data.get("data", [])]
+            return ModelListResponse(models=models)
+        elif provider_type == "anthropic":
+            models = [
+                "claude-3-5-sonnet-20241022",
+                "claude-3-opus-20240229",
+                "claude-3-sonnet-20240229",
+                "claude-3-haiku-20240307"
+            ]
+            return ModelListResponse(models=models)
+        elif provider_type == "azure":
+            return ModelListResponse(models=[])
+        else:
+            return ModelListResponse(models=[])
+    except Exception as e:
+        logger.error(f"Model discovery failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch models: {str(e)}")
