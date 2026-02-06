@@ -15,7 +15,7 @@ from app.schemas.case import (
 )
 from app.repositories.setting_repository import SettingRepository
 from app.middleware.permissions import admin_required
-from app.schemas.case import UserResponse
+from app.schemas.user import UserResponse
 
 logger = get_logger(__name__)
 router = APIRouter()
