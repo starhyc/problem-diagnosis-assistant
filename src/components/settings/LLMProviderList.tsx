@@ -41,13 +41,13 @@ export function LLMProviderList() {
             <div className="flex justify-between items-start">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-2">
-                  <h3 className="font-medium">{provider.name}</h3>
+                  <h3 className="font-medium text-text-main">{provider.name}</h3>
                   {provider.is_default && <Badge variant="primary">默认</Badge>}
                   {!provider.enabled && <Badge variant="error">已禁用</Badge>}
                 </div>
-                <p className="text-sm text-gray-600">提供商: {provider.provider}</p>
-                {provider.base_url && <p className="text-sm text-gray-600">URL: {provider.base_url}</p>}
-                <p className="text-sm text-gray-600">模型: {provider.models.join(', ')}</p>
+                <p className="text-sm text-text-muted">提供商: {provider.provider}</p>
+                {provider.base_url && <p className="text-sm text-text-muted">URL: {provider.base_url}</p>}
+                <p className="text-sm text-text-muted">模型: {provider.models.join(', ')}</p>
               </div>
               <div className="flex gap-2">
                 <Button

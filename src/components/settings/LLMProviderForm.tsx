@@ -36,6 +36,12 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
     }
   }, [provider]);
 
+  const needsBaseUrl = formData.provider === 'azure' || formData.provider === 'custom';
+  const baseUrlLabel = formData.provider === 'azure' ? 'Azure Endpoint' : 'Base URL';
+  const baseUrlPlaceholder = formData.provider === 'azure'
+    ? 'https://your-resource.openai.azure.com'
+    : 'https://api.openai.com/v1';
+
   const handleDiscoverModels = async () => {
     if (!provider?.id) return;
     setDiscovering(true);
@@ -83,7 +89,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
             type="text"
             value={formData.name}
             onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-            className="w-full px-3 py-2 border rounded text-text-main bg-bg-surface"
+            className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
             required
           />
         </div>
@@ -93,7 +99,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
           <select
             value={formData.provider}
             onChange={e => setFormData(prev => ({ ...prev, provider: e.target.value }))}
-            className="w-full px-3 py-2 border rounded text-text-main bg-bg-surface"
+            className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
           >
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
@@ -108,21 +114,26 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
             type="password"
             value={formData.api_key}
             onChange={e => setFormData(prev => ({ ...prev, api_key: e.target.value }))}
-            className="w-full px-3 py-2 border rounded text-text-main bg-bg-surface"
+            className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
             required
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-text-main mb-1">Base URL (可选)</label>
-          <input
-            type="text"
-            value={formData.base_url}
-            onChange={e => setFormData(prev => ({ ...prev, base_url: e.target.value }))}
-            className="w-full px-3 py-2 border rounded text-text-main bg-bg-surface"
-            placeholder="https://api.openai.com/v1"
-          />
-        </div>
+        {needsBaseUrl && (
+          <div>
+            <label className="block text-sm font-medium text-text-main mb-1">
+              {baseUrlLabel} {formData.provider === 'custom' && '(可选)'}
+            </label>
+            <input
+              type="text"
+              value={formData.base_url}
+              onChange={e => setFormData(prev => ({ ...prev, base_url: e.target.value }))}
+              className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
+              placeholder={baseUrlPlaceholder}
+              required={formData.provider === 'azure'}
+            />
+          </div>
+        )}
 
         <div>
           <div className="flex justify-between items-center mb-2">
@@ -144,16 +155,16 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
               type="text"
               value={manualModel}
               onChange={e => setManualModel(e.target.value)}
-              className="flex-1 px-3 py-2 border rounded text-text-main bg-bg-surface"
+              className="flex-1 px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
               placeholder="手动添加模型"
             />
             <Button type="button" onClick={handleAddModel}>添加</Button>
           </div>
           <div className="flex flex-wrap gap-2">
             {formData.models.map(model => (
-              <span key={model} className="px-2 py-1 bg-gray-100 rounded text-sm flex items-center gap-1">
+              <span key={model} className="px-2 py-1 bg-bg-elevated border border-border-subtle rounded text-sm flex items-center gap-1 text-text-main">
                 {model}
-                <button type="button" onClick={() => handleRemoveModel(model)} className="text-red-500">×</button>
+                <button type="button" onClick={() => handleRemoveModel(model)} className="text-semantic-danger hover:text-semantic-danger/80">×</button>
               </span>
             ))}
           </div>
