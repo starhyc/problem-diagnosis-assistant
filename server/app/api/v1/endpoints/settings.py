@@ -306,10 +306,10 @@ def discover_models_with_config(data: dict, user: UserResponse = Depends(admin_r
             import requests
             url = f"{base_url or 'https://api.openai.com/v1'}/models"
             headers = {"Authorization": f"Bearer {api_key}"}
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            models = [model["id"] for model in data.get("data", [])]
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            resp_data = resp.json()
+            models = [model["id"] for model in resp_data.get("data", [])]
             return ModelListResponse(models=models)
         elif provider_type == "anthropic":
             models = [

@@ -41,28 +41,6 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
     }
   }, [provider]);
 
-  // Debounced auto-discovery for existing providers
-  useEffect(() => {
-    // Clean up previous timer
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    // Check if auto-discovery should trigger
-    const shouldAutoDiscover = shouldTriggerAutoDiscover();
-
-    if (shouldAutoDiscover) {
-      debounceTimerRef.current = setTimeout(() => {
-        autoDiscoverModels();
-      }, 800);
-    }
-
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
-    };
-  }, [formData.api_key, formData.base_url, formData.provider, provider]);
 
   // Determine if base URL field is needed
   const needsBaseUrl = formData.provider === 'azure' || formData.provider === 'custom';
@@ -234,71 +212,10 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
         )}
 
         <div>
-          <div className="flex justify-between items-center mb-2">
-            <label className="block text-sm font-medium text-text-main">模型列表</label>
-            <div className="flex gap-2 items-center">
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={handleDiscoverModels}
-                disabled={discovering || !shouldTriggerAutoDiscover()}
-              >
-                {discovering ? '发现中...' : '自动发现'}
-              </Button>
-            </div>
-          </div>
+          <label className="block text-sm font-medium text-text-main mb-2">模型列表</label>
 
-          {/* Auto-discovery progress indicator */}
-          {discovering && (
-            <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
-              正在发现可用模型...
-            </div>
-          )}
-
-          {/* Auto-discovery error */}
-          {discoverError && (
-            <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-              {discoverError}
-              <button
-                type="button"
-                onClick={autoDiscoverModels}
-                className="ml-2 underline font-medium"
-              >
-                重试
-              </button>
-            </div>
-          )}
-
-          {/* Available Models Dropdown */}
-          {availableModels.length > 0 && (
-            <div className="mb-3 relative">
-              <label className="block text-sm font-medium text-text-main mb-2">
-                可用模型 (点击添加到列表)
-              </label>
-              <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto border border-border-subtle rounded p-2 bg-bg-surface">
-                {availableModels.map((model) => (
-                  <button
-                    key={model}
-                    type="button"
-                    onClick={() => handleAddModelFromDropdown(model)}
-                    className={`px-2 py-1 text-sm border rounded ${
-                      formData.models.includes(model)
-                        ? 'bg-green-100 border-green-300 text-green-800 cursor-default'
-                        : 'bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 text-text-main'
-                    }`}
-                    disabled={formData.models.includes(model)}
-                  >
-                    {model}
-                    {formData.models.includes(model) && ' ✓'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Manual add */}
-          <div className="flex gap-2 mb-2">
+          {/* Model input with auto-discovery */}
+          <div className="relative mb-2">
             <input
               type="text"
               value={manualModel}
@@ -308,35 +225,68 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
                   autoDiscoverModels();
                 }
               }}
-              className="flex-1 px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
-              placeholder="手动添加模型 (如: gpt-4, claude-3...)"
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleManualAddModel();
+                }
+              }}
+              className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              placeholder="点击输入框自动发现，或手动输入模型名称后按回车"
             />
-            <Button type="button" onClick={handleManualAddModel}>添加</Button>
-          </div>
 
-          {/* Current Models */}
-          {formData.models.length > 0 && (
-            <>
-              <div className="text-sm text-text-secondary mb-1">已添加的模型:</div>
-              <div className="flex flex-wrap gap-2">
-                {formData.models.map(model => (
-                  <span
+            {/* Dropdown with available models */}
+            {showModelDropdown && availableModels.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-border-subtle rounded shadow-lg max-h-60 overflow-y-auto">
+                {discovering && (
+                  <div className="p-3 text-sm text-blue-700 bg-blue-50">
+                    正在发现可用模型...
+                  </div>
+                )}
+                {availableModels.map((model) => (
+                  <button
                     key={model}
-                    className="px-2 py-1 bg-bg-elevated border border-border-subtle rounded text-sm flex items-center gap-1 text-text-main"
+                    type="button"
+                    onClick={() => handleAddModelFromDropdown(model)}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex items-center justify-between ${
+                      formData.models.includes(model) ? 'bg-green-50 text-green-800' : 'text-text-main'
+                    }`}
                   >
-                    {model}
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveModel(model)}
-                      className="text-semantic-danger hover:text-semantic-danger/80 font-bold px-1"
-                      title="移除"
-                    >
-                      ×
-                    </button>
-                  </span>
+                    <span>{model}</span>
+                    {formData.models.includes(model) && <span className="text-green-600">✓</span>}
+                  </button>
                 ))}
               </div>
-            </>
+            )}
+          </div>
+
+          {/* Discovery error */}
+          {discoverError && (
+            <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+              {discoverError}
+            </div>
+          )}
+
+          {/* Selected Models */}
+          {formData.models.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {formData.models.map(model => (
+                <span
+                  key={model}
+                  className="px-2 py-1 bg-blue-100 border border-blue-300 rounded text-sm flex items-center gap-1 text-blue-800"
+                >
+                  {model}
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveModel(model)}
+                    className="text-blue-600 hover:text-blue-800 font-bold"
+                    title="移除"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
           )}
         </div>
 
