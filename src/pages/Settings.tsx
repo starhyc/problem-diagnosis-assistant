@@ -57,7 +57,7 @@ export default function Settings() {
     }
     loadLLMProviders();
     loadTools();
-  }, [loadLLMProviders, loadTools, user]);
+  }, [user]);
 
   if (user?.role !== 'admin') {
     return (
