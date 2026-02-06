@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     app_name: str = "AIOps 智能诊断平台"
     app_version: str = "1.0.0"
     debug: bool = True
-    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "http://localhost:5175,http://localhost:3000"
     log_level: str = "INFO"
     log_file: str = "logs/aiops.log"
 
