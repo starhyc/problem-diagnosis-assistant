@@ -107,3 +107,37 @@ class SettingRepository(BaseRepository[Setting]):
     def get_all_types(self, session: Session) -> List[str]:
         types = session.query(Setting.setting_type).distinct().all()
         return [t[0] for t in types]
+
+    @with_session
+    def get_default_provider(self, session: Session) -> Optional[Setting]:
+        """Get the default LLM provider"""
+        setting = session.query(Setting).filter(
+            Setting.setting_type == "llm_provider",
+            Setting.is_default == True
+        ).first()
+        if setting:
+            session.expunge(setting)
+            if setting.config:
+                config = json.loads(setting.config)
+                setting.config = json.dumps(self._decrypt_sensitive_fields(config, "llm_provider"))
+        return setting
+
+    @with_session
+    def set_default_provider(self, session: Session, setting_id: str) -> Optional[Setting]:
+        """Set a provider as default, unsetting any previous default"""
+        # Unset current default
+        session.query(Setting).filter(
+            Setting.setting_type == "llm_provider",
+            Setting.is_default == True
+        ).update({"is_default": False})
+
+        # Set new default
+        setting = session.query(Setting).filter(
+            Setting.setting_type == "llm_provider",
+            Setting.setting_id == setting_id
+        ).first()
+        if setting:
+            setting.is_default = True
+            session.flush()
+            session.expunge(setting)
+        return setting

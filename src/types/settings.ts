@@ -12,20 +12,8 @@ export interface LLMProvider {
   api_key: string;
   base_url?: string;
   models: string[];
-  is_primary: boolean;
-  is_fallback: boolean;
+  is_default: boolean;
   enabled: boolean;
-}
-
-export interface DatabaseConfig {
-  id: string;
-  type: string;
-  host?: string;
-  port?: number;
-  database?: string;
-  user?: string;
-  password?: string;
-  url?: string;
 }
 
 export interface TestResult {
@@ -36,5 +24,4 @@ export interface TestResult {
 export interface SettingsData {
   tools: Tool[];
   llmProviders: LLMProvider[];
-  databases: DatabaseConfig[];
 }

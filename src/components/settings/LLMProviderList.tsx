@@ -42,8 +42,7 @@ export function LLMProviderList() {
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-2">
                   <h3 className="font-medium">{provider.name}</h3>
-                  {provider.is_primary && <Badge variant="primary">主要</Badge>}
-                  {provider.is_fallback && <Badge variant="secondary">备用</Badge>}
+                  {provider.is_default && <Badge variant="primary">默认</Badge>}
                   {!provider.enabled && <Badge variant="error">已禁用</Badge>}
                 </div>
                 <p className="text-sm text-gray-600">提供商: {provider.provider}</p>

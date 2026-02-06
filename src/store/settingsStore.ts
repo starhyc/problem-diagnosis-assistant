@@ -1,10 +1,9 @@
 import { create } from 'zustand';
-import { LLMProvider, DatabaseConfig, TestResult, Tool } from '@/types/settings';
+import { LLMProvider, TestResult, Tool } from '@/types/settings';
 import { settingsApi } from '@/lib/api';
 
 interface SettingsState {
   llmProviders: LLMProvider[];
-  databases: DatabaseConfig[];
   tools: Tool[];
   loading: boolean;
   error: string | null;
@@ -16,17 +15,12 @@ interface SettingsState {
   testLLMProvider: (id: string) => Promise<TestResult>;
   fetchModels: (id: string) => Promise<string[]>;
 
-  loadDatabases: () => Promise<void>;
-  updateDatabase: (id: string, config: Partial<DatabaseConfig>) => Promise<void>;
-  testDatabase: (id: string) => Promise<TestResult>;
-
   loadTools: () => Promise<void>;
   testTool: (id: string) => Promise<TestResult>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   llmProviders: [],
-  databases: [],
   tools: [],
   loading: false,
   error: null,
@@ -86,34 +80,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   fetchModels: async (id) => {
     return await settingsApi.fetchModels(id);
-  },
-
-  loadDatabases: async () => {
-    set({ loading: true, error: null });
-    try {
-      const databases = await settingsApi.getDatabases();
-      set({ databases, loading: false });
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
-    }
-  },
-
-  updateDatabase: async (id, config) => {
-    set({ loading: true, error: null });
-    try {
-      const updated = await settingsApi.updateDatabase(id, config);
-      set(state => ({
-        databases: state.databases.map(d => d.id === id ? updated : d),
-        loading: false
-      }));
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
-      throw error;
-    }
-  },
-
-  testDatabase: async (id) => {
-    return await settingsApi.testDatabase(id);
   },
 
   loadTools: async () => {

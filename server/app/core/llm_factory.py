@@ -86,13 +86,15 @@ class LLMFactory:
                     "models": provider_config.get("models", []),
                 }
 
-                if provider_config.get("is_primary"):
+                # Use is_default column instead of config JSON
+                if hasattr(provider, 'is_default') and provider.is_default:
                     config["primary"] = provider_id
-                if provider_config.get("is_fallback"):
+                # All other enabled providers serve as fallback
+                elif not config.get("fallback"):
                     config["fallback"] = provider_id
 
             if not config["primary"]:
-                logger.warning("No primary provider configured, falling back to environment variables")
+                logger.warning("No default provider configured, falling back to environment variables")
                 return self._load_from_env()
 
             return config

@@ -16,8 +16,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
     api_key: '',
     base_url: '',
     models: [] as string[],
-    is_primary: false,
-    is_fallback: false,
+    is_default: false,
     enabled: true,
   });
   const [manualModel, setManualModel] = useState('');
@@ -31,8 +30,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
         api_key: provider.api_key,
         base_url: provider.base_url || '',
         models: provider.models,
-        is_primary: provider.is_primary,
-        is_fallback: provider.is_fallback,
+        is_default: provider.is_default,
         enabled: provider.enabled,
       });
     }
@@ -80,7 +78,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
     <Modal isOpen onClose={onClose} title={provider ? '编辑 LLM 提供商' : '添加 LLM 提供商'}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium mb-1">名称</label>
+          <label className="block text-sm font-medium text-text-main mb-1">名称</label>
           <input
             type="text"
             value={formData.name}
@@ -91,7 +89,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">提供商类型</label>
+          <label className="block text-sm font-medium text-text-main mb-1">提供商类型</label>
           <select
             value={formData.provider}
             onChange={e => setFormData(prev => ({ ...prev, provider: e.target.value }))}
@@ -105,7 +103,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">API Key</label>
+          <label className="block text-sm font-medium text-text-main mb-1">API Key</label>
           <input
             type="password"
             value={formData.api_key}
@@ -116,7 +114,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">Base URL (可选)</label>
+          <label className="block text-sm font-medium text-text-main mb-1">Base URL (可选)</label>
           <input
             type="text"
             value={formData.base_url}
@@ -128,7 +126,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
 
         <div>
           <div className="flex justify-between items-center mb-2">
-            <label className="block text-sm font-medium">模型列表</label>
+            <label className="block text-sm font-medium text-text-main">模型列表</label>
             {provider && (
               <Button
                 type="button"
@@ -165,18 +163,10 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              checked={formData.is_primary}
-              onChange={e => setFormData(prev => ({ ...prev, is_primary: e.target.checked }))}
+              checked={formData.is_default}
+              onChange={e => setFormData(prev => ({ ...prev, is_default: e.target.checked }))}
             />
-            <span className="text-sm">设为主要提供商</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={formData.is_fallback}
-              onChange={e => setFormData(prev => ({ ...prev, is_fallback: e.target.checked }))}
-            />
-            <span className="text-sm">设为备用提供商</span>
+            <span className="text-sm text-text-main">设为默认提供商</span>
           </label>
           <label className="flex items-center gap-2">
             <input
@@ -184,7 +174,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
               checked={formData.enabled}
               onChange={e => setFormData(prev => ({ ...prev, enabled: e.target.checked }))}
             />
-            <span className="text-sm">启用</span>
+            <span className="text-sm text-text-main">启用</span>
           </label>
         </div>
 

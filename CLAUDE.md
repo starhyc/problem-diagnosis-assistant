@@ -223,12 +223,15 @@ Frontend (`.env`):
 - `VITE_API_BASE_URL` - Backend API URL (default: `http://localhost:8000/api/v1`)
 
 Backend (`server/.env`):
-- `DATABASE_URL` - Database connection string
+- `DATABASE_URL` - PostgreSQL connection string (e.g., `postgresql://user:password@host:port/dbname`)
+- `REDIS_URL` - Redis connection string (e.g., `redis://localhost:6379/0`)
 - `SECRET_KEY` - JWT signing key (must be changed in production)
 - `ACCESS_TOKEN_EXPIRE_MINUTES` - Token expiration time
 - `CORS_ORIGINS` - Allowed frontend origins
 - `LOG_LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - `LOG_FILE` - Log file path (default: `logs/aiops.log`)
+
+**Important:** Database configuration (PostgreSQL and Redis) is managed exclusively through environment variables for security reasons. There is no UI for database configuration. All database connection settings must be configured in `server/.env` before starting the application.
 
 ## Backend API Documentation
 

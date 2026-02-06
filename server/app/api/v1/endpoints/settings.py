@@ -10,8 +10,6 @@ from app.schemas.case import (
     LLMProviderUpdateRequest,
     TestConnectionResponse,
     ModelListResponse,
-    DatabaseConfigRequest,
-    DatabaseConfigResponse,
 )
 from app.repositories.setting_repository import SettingRepository
 from app.middleware.permissions import admin_required
@@ -82,8 +80,7 @@ def get_llm_providers(user: UserResponse = Depends(admin_required)):
             api_key=config.get("api_key", ""),
             base_url=config.get("base_url"),
             models=config.get("models", []),
-            is_primary=config.get("is_primary", False),
-            is_fallback=config.get("is_fallback", False),
+            is_default=getattr(provider, 'is_default', False),
             enabled=provider.enabled
         ))
 
@@ -98,21 +95,9 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
     if existing:
         raise HTTPException(status_code=409, detail="Provider with this name already exists")
 
-    # Validate primary/fallback constraints
-    if data.is_primary and data.is_fallback:
-        raise HTTPException(status_code=400, detail="Provider cannot be both primary and fallback")
-
-    # Unset existing primary/fallback if needed
-    if data.is_primary or data.is_fallback:
-        providers = setting_repo.get_by_type("llm_provider")
-        for provider in providers:
-            config = json.loads(provider.config) if provider.config else {}
-            if data.is_primary and config.get("is_primary"):
-                config["is_primary"] = False
-                setting_repo.update_config("llm_provider", provider.setting_id, json.dumps(config))
-            if data.is_fallback and config.get("is_fallback"):
-                config["is_fallback"] = False
-                setting_repo.update_config("llm_provider", provider.setting_id, json.dumps(config))
+    # Unset existing default if this is being set as default
+    if data.is_default:
+        setting_repo.set_default_provider(None)  # Unset all defaults first
 
     # Create provider
     setting_id = data.name.lower().replace(" ", "-")
@@ -121,8 +106,6 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
         "api_key": data.api_key,
         "base_url": data.base_url,
         "models": data.models or [],
-        "is_primary": data.is_primary,
-        "is_fallback": data.is_fallback
     }
 
     setting_repo.create({
@@ -130,8 +113,13 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
         "setting_id": setting_id,
         "name": data.name,
         "enabled": True,
+        "is_default": data.is_default,
         "config": json.dumps(config)
     })
+
+    # Set as default if requested
+    if data.is_default:
+        setting_repo.set_default_provider(setting_id)
 
     created = setting_repo.get_by_type_and_id("llm_provider", setting_id)
     config = json.loads(created.config)
@@ -143,8 +131,7 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
         api_key=config["api_key"],
         base_url=config.get("base_url"),
         models=config.get("models", []),
-        is_primary=config.get("is_primary", False),
-        is_fallback=config.get("is_fallback", False),
+        is_default=getattr(created, 'is_default', False),
         enabled=created.enabled
     )
 
@@ -170,31 +157,9 @@ def update_llm_provider(provider_id: str, data: LLMProviderUpdateRequest, user: 
     if data.enabled is not None:
         provider.enabled = data.enabled
 
-    # Handle primary/fallback updates
-    if data.is_primary is not None or data.is_fallback is not None:
-        if data.is_primary and data.is_fallback:
-            raise HTTPException(status_code=400, detail="Provider cannot be both primary and fallback")
-
-        # Unset other providers
-        if data.is_primary:
-            providers = setting_repo.get_by_type("llm_provider")
-            for p in providers:
-                if p.setting_id != provider_id:
-                    p_config = json.loads(p.config)
-                    if p_config.get("is_primary"):
-                        p_config["is_primary"] = False
-                        setting_repo.update_config("llm_provider", p.setting_id, json.dumps(p_config))
-            config["is_primary"] = True
-
-        if data.is_fallback:
-            providers = setting_repo.get_by_type("llm_provider")
-            for p in providers:
-                if p.setting_id != provider_id:
-                    p_config = json.loads(p.config)
-                    if p_config.get("is_fallback"):
-                        p_config["is_fallback"] = False
-                        setting_repo.update_config("llm_provider", p.setting_id, json.dumps(p_config))
-            config["is_fallback"] = True
+    # Handle default update
+    if data.is_default is not None and data.is_default:
+        setting_repo.set_default_provider(provider_id)
 
     # Save updates
     setting_repo.update(provider.id, name=provider.name, enabled=provider.enabled)
@@ -210,8 +175,7 @@ def update_llm_provider(provider_id: str, data: LLMProviderUpdateRequest, user: 
         api_key=config["api_key"],
         base_url=config.get("base_url"),
         models=config.get("models", []),
-        is_primary=config.get("is_primary", False),
-        is_fallback=config.get("is_fallback", False),
+        is_default=getattr(updated, 'is_default', False),
         enabled=updated.enabled
     )
 
@@ -223,9 +187,8 @@ def delete_llm_provider(provider_id: str, user: UserResponse = Depends(admin_req
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
 
-    config = json.loads(provider.config)
-    if config.get("is_primary"):
-        raise HTTPException(status_code=400, detail="Cannot delete primary provider. Set another provider as primary first.")
+    if getattr(provider, 'is_default', False):
+        raise HTTPException(status_code=400, detail="Cannot delete default provider. Set another provider as default first.")
 
     setting_repo.delete(provider.id)
     return {"status": "deleted"}
@@ -326,122 +289,3 @@ def get_llm_provider_models(provider_id: str, user: UserResponse = Depends(admin
     except Exception as e:
         logger.error(f"Model discovery failed for {provider_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch models: {str(e)}")
-
-
-# Database Configuration Endpoints
-
-@router.get("/databases", response_model=List[DatabaseConfigResponse])
-def get_databases(user: UserResponse = Depends(admin_required)):
-    """Get all database configurations"""
-    databases = setting_repo.get_by_type("database")
-
-    response = []
-    for db in databases:
-        config = json.loads(db.config) if db.config else {}
-        response.append(DatabaseConfigResponse(
-            id=db.setting_id,
-            type=config.get("type", ""),
-            host=config.get("host"),
-            port=config.get("port"),
-            database=config.get("database"),
-            user=config.get("user"),
-            password=config.get("password"),
-            url=config.get("url")
-        ))
-
-    return response
-
-
-@router.put("/databases/{db_id}", response_model=DatabaseConfigResponse)
-def update_database(db_id: str, data: DatabaseConfigRequest, user: UserResponse = Depends(admin_required)):
-    """Update database configuration"""
-    db = setting_repo.get_by_type_and_id("database", db_id)
-
-    if not db:
-        # Create if doesn't exist
-        config = {
-            "type": data.type,
-            "host": data.host,
-            "port": data.port,
-            "database": data.database,
-            "user": data.user,
-            "password": data.password,
-            "url": data.url
-        }
-
-        setting_repo.create({
-            "setting_type": "database",
-            "setting_id": db_id,
-            "name": data.type.upper(),
-            "enabled": True,
-            "config": json.dumps(config)
-        })
-
-        db = setting_repo.get_by_type_and_id("database", db_id)
-    else:
-        # Update existing
-        config = json.loads(db.config)
-
-        if data.host is not None:
-            config["host"] = data.host
-        if data.port is not None:
-            config["port"] = data.port
-        if data.database is not None:
-            config["database"] = data.database
-        if data.user is not None:
-            config["user"] = data.user
-        if data.password is not None:
-            config["password"] = data.password
-        if data.url is not None:
-            config["url"] = data.url
-
-        setting_repo.update_config("database", db_id, json.dumps(config))
-        db = setting_repo.get_by_type_and_id("database", db_id)
-
-    config = json.loads(db.config)
-    return DatabaseConfigResponse(
-        id=db.setting_id,
-        type=config.get("type", ""),
-        host=config.get("host"),
-        port=config.get("port"),
-        database=config.get("database"),
-        user=config.get("user"),
-        password=config.get("password"),
-        url=config.get("url")
-    )
-
-
-@router.post("/databases/{db_id}/test", response_model=TestConnectionResponse)
-def test_database(db_id: str, user: UserResponse = Depends(admin_required)):
-    """Test database connection"""
-    db = setting_repo.get_by_type_and_id("database", db_id)
-    if not db:
-        raise HTTPException(status_code=404, detail="Database configuration not found")
-
-    config = json.loads(db.config)
-    db_type = config.get("type")
-
-    try:
-        if db_type == "postgresql":
-            import psycopg2
-            conn = psycopg2.connect(
-                host=config.get("host"),
-                port=config.get("port"),
-                database=config.get("database"),
-                user=config.get("user"),
-                password=config.get("password"),
-                connect_timeout=10
-            )
-            conn.close()
-            return TestConnectionResponse(success=True, message="PostgreSQL connection successful")
-        elif db_type == "redis":
-            import redis
-            url = config.get("url", f"redis://{config.get('host')}:{config.get('port', 6379)}")
-            r = redis.from_url(url, socket_connect_timeout=10)
-            r.ping()
-            return TestConnectionResponse(success=True, message="Redis connection successful")
-        else:
-            raise HTTPException(status_code=400, detail="Unknown database type")
-    except Exception as e:
-        logger.error(f"Database connection test failed for {db_id}: {e}")
-        return TestConnectionResponse(success=False, message=str(e))

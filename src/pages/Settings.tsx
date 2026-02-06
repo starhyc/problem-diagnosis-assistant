@@ -2,12 +2,52 @@ import { useState, useEffect } from 'react';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useAuthStore } from '@/store/authStore';
 import { LLMProviderList } from '@/components/settings/LLMProviderList';
-import { DatabaseConfig } from '@/components/settings/DatabaseConfig';
 import ToolList from '@/components/settings/ToolList';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+
+interface CollapsibleSectionProps {
+  title: string;
+  children: React.ReactNode;
+  defaultExpanded?: boolean;
+  sectionKey: string;
+}
+
+function CollapsibleSection({ title, children, defaultExpanded = true, sectionKey }: CollapsibleSectionProps) {
+  const [isExpanded, setIsExpanded] = useState(() => {
+    const saved = localStorage.getItem(`settings-section-${sectionKey}`);
+    return saved !== null ? saved === 'true' : defaultExpanded;
+  });
+
+  const toggleExpanded = () => {
+    const newState = !isExpanded;
+    setIsExpanded(newState);
+    localStorage.setItem(`settings-section-${sectionKey}`, String(newState));
+  };
+
+  return (
+    <div className="border border-border-subtle rounded-lg bg-bg-surface">
+      <button
+        onClick={toggleExpanded}
+        className="w-full flex items-center justify-between p-4 hover:bg-bg-elevated/30 transition-colors"
+      >
+        <h2 className="text-lg font-semibold text-text-main">{title}</h2>
+        {isExpanded ? (
+          <ChevronDown className="w-5 h-5 text-text-muted" />
+        ) : (
+          <ChevronRight className="w-5 h-5 text-text-muted" />
+        )}
+      </button>
+      {isExpanded && (
+        <div className="p-4 pt-0">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<'llm' | 'database' | 'tools'>('llm');
-  const { loadLLMProviders, loadDatabases, loadTools, loading, error } = useSettingsStore();
+  const { loadLLMProviders, loadTools, loading, error } = useSettingsStore();
   const { user } = useAuthStore();
 
   useEffect(() => {
@@ -16,9 +56,8 @@ export default function Settings() {
       return;
     }
     loadLLMProviders();
-    loadDatabases();
     loadTools();
-  }, [loadLLMProviders, loadDatabases, loadTools, user]);
+  }, [loadLLMProviders, loadTools, user]);
 
   if (user?.role !== 'admin') {
     return (
@@ -54,42 +93,15 @@ export default function Settings() {
         </div>
       )}
 
-      <div className="flex items-center gap-4 mb-6">
-        <button
-          onClick={() => setActiveTab('llm')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-            activeTab === 'llm'
-              ? 'bg-primary text-white'
-              : 'bg-bg-elevated text-text-main hover:bg-bg-elevated/70'
-          }`}
-        >
-          LLM 提供商
-        </button>
-        <button
-          onClick={() => setActiveTab('database')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-            activeTab === 'database'
-              ? 'bg-primary text-white'
-              : 'bg-bg-elevated text-text-main hover:bg-bg-elevated/70'
-          }`}
-        >
-          数据库
-        </button>
-        <button
-          onClick={() => setActiveTab('tools')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-            activeTab === 'tools'
-              ? 'bg-primary text-white'
-              : 'bg-bg-elevated text-text-main hover:bg-bg-elevated/70'
-          }`}
-        >
-          外部工具
-        </button>
-      </div>
+      <div className="space-y-4">
+        <CollapsibleSection title="LLM 提供商" sectionKey="llm-providers" defaultExpanded={true}>
+          <LLMProviderList />
+        </CollapsibleSection>
 
-      {activeTab === 'llm' && <LLMProviderList />}
-      {activeTab === 'database' && <DatabaseConfig />}
-      {activeTab === 'tools' && <ToolList />}
+        <CollapsibleSection title="外部工具" sectionKey="external-tools" defaultExpanded={true}>
+          <ToolList />
+        </CollapsibleSection>
+      </div>
     </div>
   );
 }
