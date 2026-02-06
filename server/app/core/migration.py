@@ -32,7 +32,7 @@ def migrate_env_to_db():
             "is_default": settings.llm_primary_provider == "openai",
         }
 
-        setting_repo.create({
+        setting_repo.create(**{
             "setting_type": "llm_provider",
             "setting_id": "openai-migrated",
             "name": "OpenAI (migrated from env)",
@@ -52,7 +52,7 @@ def migrate_env_to_db():
             "is_default": settings.llm_primary_provider == "anthropic",
         }
 
-        setting_repo.create({
+        setting_repo.create(**{
             "setting_type": "llm_provider",
             "setting_id": "anthropic-migrated",
             "name": "Anthropic (migrated from env)",
@@ -72,7 +72,7 @@ def migrate_env_to_db():
             "is_default": settings.llm_primary_provider == "azure",
         }
 
-        setting_repo.create({
+        setting_repo.create(**{
             "setting_type": "llm_provider",
             "setting_id": "azure-migrated",
             "name": "Azure OpenAI (migrated from env)",

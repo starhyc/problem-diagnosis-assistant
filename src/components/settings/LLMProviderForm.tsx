@@ -196,7 +196,8 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
             type="text"
             value={formData.name}
             onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-            className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
+            className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+            placeholder="例如: My OpenAI Provider"
             required
           />
         </div>
@@ -221,7 +222,8 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
             type="password"
             value={formData.api_key}
             onChange={e => setFormData(prev => ({ ...prev, api_key: e.target.value }))}
-            className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
+            className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+            placeholder="sk-..."
             required
           />
         </div>
@@ -314,6 +316,11 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
               type="text"
               value={manualModel}
               onChange={e => setManualModel(e.target.value)}
+              onFocus={() => {
+                if (shouldTriggerAutoDiscover() && !discovering && availableModels.length === 0) {
+                  autoDiscoverModels();
+                }
+              }}
               className="flex-1 px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface"
               placeholder="手动添加模型 (如: gpt-4, claude-3...)"
             />

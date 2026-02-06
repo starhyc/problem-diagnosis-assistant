@@ -108,7 +108,7 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
         "models": data.models or [],
     }
 
-    setting_repo.create({
+    setting_repo.create(**{
         "setting_type": "llm_provider",
         "setting_id": setting_id,
         "name": data.name,

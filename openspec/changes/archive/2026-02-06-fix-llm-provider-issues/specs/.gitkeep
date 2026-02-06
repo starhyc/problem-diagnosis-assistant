@@ -1,0 +1,7 @@
+# No specification changes required
+
+This change contains only implementation fixes with no requirement-level changes:
+- Backend bug fixes (TypeError in repository calls)
+- UX improvements (auto-fetch models, form styling)
+
+No new capabilities or modified requirements.
