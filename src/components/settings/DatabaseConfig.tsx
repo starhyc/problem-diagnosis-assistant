@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSettingsStore } from '@/store/settingsStore';
-import { Button } from '@/components/common/Button';
-import { Card } from '@/components/common/Card';
+import { Button, Card } from '@/components/common';
 
 export function DatabaseConfig() {
   const { databases, updateDatabase, testDatabase, loadDatabases } = useSettingsStore();

@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSettingsStore } from '@/store/settingsStore';
 import { LLMProvider } from '@/types/settings';
-import { Button } from '@/components/common/Button';
-import { Modal } from '@/components/common/Modal';
+import { Button, Modal } from '@/components/common';
 
 interface LLMProviderFormProps {
   provider: LLMProvider | null;
