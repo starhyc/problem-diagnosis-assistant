@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Server, GitBranch, Cloud, Database, RefreshCw, X } from 'lucide-react';
 import { Card, Button } from '../common';
 import { cn } from '../../lib/utils';
@@ -6,12 +6,8 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { toolIcons } from '../../constants';
 
 export default function ToolList() {
-  const { tools, loadTools, testTool } = useSettingsStore();
+  const { tools, testTool } = useSettingsStore();
   const [testingId, setTestingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadTools();
-  }, [loadTools]);
 
   const handleTest = async (id: string) => {
     setTestingId(id);
