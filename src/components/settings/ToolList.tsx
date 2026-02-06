@@ -1,15 +1,30 @@
+import { useState, useEffect } from 'react';
 import { Server, GitBranch, Cloud, Database, RefreshCw, X } from 'lucide-react';
 import { Card, Button } from '../common';
 import { cn } from '../../lib/utils';
-import { Tool } from '../../types/settings';
+import { useSettingsStore } from '@/store/settingsStore';
 import { toolIcons } from '../../constants';
 
-interface ToolListProps {
-  tools: Tool[];
-  onTest: (id: string) => void;
-}
+export default function ToolList() {
+  const { tools, loadTools, testTool } = useSettingsStore();
+  const [testingId, setTestingId] = useState<string | null>(null);
 
-export default function ToolList({ tools, onTest }: ToolListProps) {
+  useEffect(() => {
+    loadTools();
+  }, [loadTools]);
+
+  const handleTest = async (id: string) => {
+    setTestingId(id);
+    try {
+      const result = await testTool(id);
+      alert(result.success ? '连接成功' : `连接失败: ${result.message}`);
+    } catch (error: any) {
+      alert(`测试失败: ${error.message}`);
+    } finally {
+      setTestingId(null);
+    }
+  };
+
   return (
     <Card className="p-6">
       <h3 className="text-lg font-semibold text-text-main mb-4">外部工具</h3>
@@ -55,15 +70,13 @@ export default function ToolList({ tools, onTest }: ToolListProps) {
               </div>
               <div className="flex items-center gap-2">
                 <Button
-                  onClick={() => onTest(tool.id)}
+                  onClick={() => handleTest(tool.id)}
                   variant="secondary"
                   icon={<RefreshCw className="w-4 h-4" />}
+                  disabled={testingId === tool.id}
                 >
-                  测试连接
+                  {testingId === tool.id ? '测试中...' : '测试连接'}
                 </Button>
-                <button className="p-2 bg-semantic-danger/10 hover:bg-semantic-danger/20 text-semantic-danger rounded-lg transition-colors">
-                  <X className="w-4 h-4" />
-                </button>
               </div>
             </div>
           );

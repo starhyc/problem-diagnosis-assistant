@@ -157,9 +157,7 @@ export interface MaskingRule {
 }
 
 export interface SettingsData {
-  redlines: Redline[];
   tools: Tool[];
-  masking_rules: MaskingRule[];
 }
 
 class ApiError extends Error {
@@ -317,27 +315,66 @@ export const knowledgeApi = {
 };
 
 export const settingsApi = {
-  async getSettings(): Promise<SettingsData> {
-    return request<SettingsData>('/settings');
+  async getLLMProviders(): Promise<any[]> {
+    return request('/settings/llm-providers');
   },
 
-  async updateRedline(redlineId: string, enabled: boolean): Promise<any> {
-    return request(`/settings/redlines/${redlineId}`, {
+  async addLLMProvider(provider: any): Promise<any> {
+    return request('/settings/llm-providers', {
+      method: 'POST',
+      body: JSON.stringify(provider),
+    });
+  },
+
+  async updateLLMProvider(id: string, provider: any): Promise<any> {
+    return request(`/settings/llm-providers/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(provider),
     });
   },
 
-  async testToolConnection(toolId: string): Promise<any> {
-    return request(`/settings/tools/${toolId}/test`, {
+  async deleteLLMProvider(id: string): Promise<void> {
+    return request(`/settings/llm-providers/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async testLLMProvider(id: string): Promise<any> {
+    return request(`/settings/llm-providers/${id}/test`, {
       method: 'POST',
     });
   },
 
-  async testMasking(text: string): Promise<{ original: string; masked: string }> {
-    return request('/settings/mask', {
+  async fetchModels(id: string): Promise<string[]> {
+    return request(`/settings/llm-providers/${id}/models`, {
       method: 'POST',
-      body: JSON.stringify({ text }),
+    });
+  },
+
+  async getDatabases(): Promise<any[]> {
+    return request('/settings/databases');
+  },
+
+  async updateDatabase(id: string, config: any): Promise<any> {
+    return request(`/settings/databases/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    });
+  },
+
+  async testDatabase(id: string): Promise<any> {
+    return request(`/settings/databases/${id}/test`, {
+      method: 'POST',
+    });
+  },
+
+  async getTools(): Promise<any[]> {
+    return request('/settings/tools');
+  },
+
+  async testTool(id: string): Promise<any> {
+    return request(`/settings/tools/${id}/test`, {
+      method: 'POST',
     });
   },
 };
