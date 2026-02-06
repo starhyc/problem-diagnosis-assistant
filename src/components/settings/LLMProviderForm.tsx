@@ -237,9 +237,9 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
 
             {/* Dropdown with available models */}
             {showModelDropdown && availableModels.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-border-subtle rounded shadow-lg max-h-60 overflow-y-auto">
+              <div className="absolute z-10 w-full mt-1 bg-bg-surface border border-border-subtle rounded shadow-lg max-h-60 overflow-y-auto">
                 {discovering && (
-                  <div className="p-3 text-sm text-blue-700 bg-blue-50">
+                  <div className="p-3 text-sm text-blue-400 bg-blue-900/20">
                     正在发现可用模型...
                   </div>
                 )}
@@ -248,12 +248,12 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
                     key={model}
                     type="button"
                     onClick={() => handleAddModelFromDropdown(model)}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex items-center justify-between ${
-                      formData.models.includes(model) ? 'bg-green-50 text-green-800' : 'text-text-main'
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-bg-elevated flex items-center justify-between ${
+                      formData.models.includes(model) ? 'bg-green-900/20 text-green-400' : 'text-text-main'
                     }`}
                   >
                     <span>{model}</span>
-                    {formData.models.includes(model) && <span className="text-green-600">✓</span>}
+                    {formData.models.includes(model) && <span className="text-green-400">✓</span>}
                   </button>
                 ))}
               </div>
