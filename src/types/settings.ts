@@ -1,10 +1,3 @@
-export interface Redline {
-  id: string;
-  name: string;
-  enabled: boolean;
-  description: string;
-}
-
 export interface Tool {
   id: string;
   name: string;
@@ -12,14 +5,36 @@ export interface Tool {
   url: string;
 }
 
-export interface MaskingRule {
-  pattern: string;
+export interface LLMProvider {
+  id: string;
   name: string;
-  replacement: string;
+  provider: string;
+  api_key: string;
+  base_url?: string;
+  models: string[];
+  is_primary: boolean;
+  is_fallback: boolean;
+  enabled: boolean;
+}
+
+export interface DatabaseConfig {
+  id: string;
+  type: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  user?: string;
+  password?: string;
+  url?: string;
+}
+
+export interface TestResult {
+  success: boolean;
+  message: string;
 }
 
 export interface SettingsData {
-  redlines: Redline[];
   tools: Tool[];
-  masking_rules: MaskingRule[];
+  llmProviders: LLMProvider[];
+  databases: DatabaseConfig[];
 }

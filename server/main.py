@@ -79,6 +79,14 @@ async def startup_event():
     logger.info(f"日志文件: {settings.log_file}")
     logger.info("=" * 50)
 
+    # Run migration from environment variables to database
+    try:
+        from app.core.migration import migrate_env_to_db
+        migrate_env_to_db()
+    except Exception as e:
+        logger.error(f"Migration failed: {e}")
+        logger.warning("System will continue with environment variable fallback")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

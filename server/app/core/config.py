@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     azure_openai_endpoint: Optional[str] = None
     azure_openai_deployment: Optional[str] = None
 
+    # Encryption
+    encryption_key: Optional[str] = None
+
     # Feature flags
     use_real_agents: bool = False
 

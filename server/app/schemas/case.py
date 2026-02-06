@@ -163,3 +163,67 @@ class DiagnosisActionResponse(BaseModel):
     title: str
     confidence: int
     description: str
+
+
+# LLM Provider schemas
+class LLMProviderRequest(BaseModel):
+    name: str
+    provider: str  # openai, anthropic, azure, custom
+    api_key: str
+    base_url: Optional[str] = None
+    models: Optional[List[str]] = None
+    is_primary: bool = False
+    is_fallback: bool = False
+
+
+class LLMProviderResponse(BaseModel):
+    id: str
+    name: str
+    provider: str
+    api_key: str  # Will be decrypted for display
+    base_url: Optional[str] = None
+    models: List[str]
+    is_primary: bool
+    is_fallback: bool
+    enabled: bool
+
+
+class LLMProviderUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    models: Optional[List[str]] = None
+    is_primary: Optional[bool] = None
+    is_fallback: Optional[bool] = None
+    enabled: Optional[bool] = None
+
+
+class TestConnectionResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class ModelListResponse(BaseModel):
+    models: List[str]
+
+
+# Database configuration schemas
+class DatabaseConfigRequest(BaseModel):
+    type: str  # postgresql, redis
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    user: Optional[str] = None
+    password: Optional[str] = None
+    url: Optional[str] = None  # For Redis URL format
+
+
+class DatabaseConfigResponse(BaseModel):
+    id: str
+    type: str
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    user: Optional[str] = None
+    password: Optional[str] = None  # Will be decrypted
+    url: Optional[str] = None

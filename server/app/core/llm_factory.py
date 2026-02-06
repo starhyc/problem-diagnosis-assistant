@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any, Tuple
 import time
+import json
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
@@ -50,112 +51,197 @@ class TokenUsageCallback(BaseCallbackHandler):
 
 class LLMFactory:
     _instance: Optional['LLMFactory'] = None
+    _last_config = None  # Cache for configuration
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._validate_config()
         return cls._instance
 
-    def _validate_config(self):
-        """Validate LLM provider configuration"""
-        errors = []
+    def _load_providers_from_db(self) -> Dict[str, Any]:
+        """Load LLM provider configurations from database"""
+        try:
+            from app.repositories.setting_repository import SettingRepository
+            setting_repo = SettingRepository()
+            providers = setting_repo.get_by_type("llm_provider")
 
-        # Check primary provider
-        if settings.llm_primary_provider == "openai" and not settings.openai_api_key:
-            errors.append("Primary provider is OpenAI but OPENAI_API_KEY is not set")
-        elif settings.llm_primary_provider == "anthropic" and not settings.anthropic_api_key:
-            errors.append("Primary provider is Anthropic but ANTHROPIC_API_KEY is not set")
-        elif settings.llm_primary_provider == "azure" and (not settings.azure_openai_api_key or not settings.azure_openai_endpoint):
-            errors.append("Primary provider is Azure but Azure credentials are not set")
+            if not providers:
+                # Fallback to environment variables
+                logger.warning("No LLM providers in database, falling back to environment variables")
+                return self._load_from_env()
 
-        # Check fallback provider
-        if settings.llm_fallback_provider == "openai" and not settings.openai_api_key:
-            errors.append("Fallback provider is OpenAI but OPENAI_API_KEY is not set")
-        elif settings.llm_fallback_provider == "anthropic" and not settings.anthropic_api_key:
-            errors.append("Fallback provider is Anthropic but ANTHROPIC_API_KEY is not set")
-        elif settings.llm_fallback_provider == "azure" and (not settings.azure_openai_api_key or not settings.azure_openai_endpoint):
-            errors.append("Fallback provider is Azure but Azure credentials are not set")
+            config = {"primary": None, "fallback": None, "providers": {}}
 
-        if errors:
-            logger.warning(f"LLM configuration issues: {'; '.join(errors)}")
+            for provider in providers:
+                if not provider.enabled:
+                    continue
+
+                provider_config = json.loads(provider.config) if provider.config else {}
+                provider_id = provider.setting_id
+
+                config["providers"][provider_id] = {
+                    "provider": provider_config.get("provider"),
+                    "api_key": provider_config.get("api_key"),
+                    "base_url": provider_config.get("base_url"),
+                    "models": provider_config.get("models", []),
+                }
+
+                if provider_config.get("is_primary"):
+                    config["primary"] = provider_id
+                if provider_config.get("is_fallback"):
+                    config["fallback"] = provider_id
+
+            if not config["primary"]:
+                logger.warning("No primary provider configured, falling back to environment variables")
+                return self._load_from_env()
+
+            return config
+        except Exception as e:
+            logger.error(f"Failed to load providers from database: {e}")
+            return self._load_from_env()
+
+    def _load_from_env(self) -> Dict[str, Any]:
+        """Fallback to environment variable configuration"""
+        config = {"primary": None, "fallback": None, "providers": {}}
+
+        if settings.openai_api_key:
+            config["providers"]["openai-env"] = {
+                "provider": "openai",
+                "api_key": settings.openai_api_key,
+                "base_url": None,
+                "models": [settings.llm_primary_model if settings.llm_primary_provider == "openai" else settings.llm_fallback_model],
+            }
+            if settings.llm_primary_provider == "openai":
+                config["primary"] = "openai-env"
+            elif settings.llm_fallback_provider == "openai":
+                config["fallback"] = "openai-env"
+
+        if settings.anthropic_api_key:
+            config["providers"]["anthropic-env"] = {
+                "provider": "anthropic",
+                "api_key": settings.anthropic_api_key,
+                "base_url": None,
+                "models": [settings.llm_primary_model if settings.llm_primary_provider == "anthropic" else settings.llm_fallback_model],
+            }
+            if settings.llm_primary_provider == "anthropic":
+                config["primary"] = "anthropic-env"
+            elif settings.llm_fallback_provider == "anthropic":
+                config["fallback"] = "anthropic-env"
+
+        if settings.azure_openai_api_key and settings.azure_openai_endpoint:
+            config["providers"]["azure-env"] = {
+                "provider": "azure",
+                "api_key": settings.azure_openai_api_key,
+                "base_url": settings.azure_openai_endpoint,
+                "models": [settings.azure_openai_deployment or "gpt-35-turbo"],
+            }
+            if settings.llm_primary_provider == "azure":
+                config["primary"] = "azure-env"
+            elif settings.llm_fallback_provider == "azure":
+                config["fallback"] = "azure-env"
+
+        return config
 
     def create_llm(self, provider: Optional[str] = None, model: Optional[str] = None, **kwargs) -> BaseChatModel:
         """Create LLM instance based on provider"""
-        provider = provider or settings.llm_primary_provider
-        model = model or (settings.llm_primary_model if provider == settings.llm_primary_provider else settings.llm_fallback_model)
+        # Load fresh configuration from database
+        config = self._load_providers_from_db()
+
+        # Determine which provider to use
+        if provider:
+            provider_id = provider
+        else:
+            provider_id = config.get("primary")
+            if not provider_id:
+                raise ValueError("No primary provider configured")
+
+        provider_config = config["providers"].get(provider_id)
+        if not provider_config:
+            raise ValueError(f"Provider {provider_id} not found")
+
+        provider_type = provider_config["provider"]
+        api_key = provider_config["api_key"]
+        base_url = provider_config.get("base_url")
+        models = provider_config.get("models", [])
+
+        # Determine model
+        if not model:
+            model = models[0] if models else "gpt-3.5-turbo"
 
         # Add token tracking callback
         callbacks = kwargs.get('callbacks', [])
-        callbacks.append(TokenUsageCallback(provider, model))
+        callbacks.append(TokenUsageCallback(provider_type, model))
         kwargs['callbacks'] = callbacks
 
         try:
-            if provider == "openai":
-                return self._create_openai(model, **kwargs)
-            elif provider == "anthropic":
-                return self._create_anthropic(model, **kwargs)
-            elif provider == "azure":
-                return self._create_azure(model, **kwargs)
+            if provider_type == "openai":
+                return self._create_openai(model, api_key, base_url, **kwargs)
+            elif provider_type == "anthropic":
+                return self._create_anthropic(model, api_key, **kwargs)
+            elif provider_type == "azure":
+                return self._create_azure(model, api_key, base_url, **kwargs)
+            elif provider_type == "custom":
+                return self._create_openai(model, api_key, base_url, **kwargs)
             else:
-                raise ValueError(f"Unsupported provider: {provider}")
+                raise ValueError(f"Unsupported provider: {provider_type}")
         except Exception as e:
-            logger.error(f"Failed to create LLM for provider {provider}: {e}")
+            logger.error(f"Failed to create LLM for provider {provider_id}: {e}")
             raise
 
-    def _create_openai(self, model: str, **kwargs) -> ChatOpenAI:
+    def _create_openai(self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs) -> ChatOpenAI:
         """Create OpenAI LLM instance"""
-        if not settings.openai_api_key:
-            raise ValueError("OpenAI API key not configured")
-
         return ChatOpenAI(
             model=model,
-            api_key=settings.openai_api_key,
+            api_key=api_key,
+            base_url=base_url,
             temperature=kwargs.get("temperature", 0),
             **kwargs
         )
 
-    def _create_anthropic(self, model: str, **kwargs) -> ChatAnthropic:
+    def _create_anthropic(self, model: str, api_key: str, **kwargs) -> ChatAnthropic:
         """Create Anthropic LLM instance"""
-        if not settings.anthropic_api_key:
-            raise ValueError("Anthropic API key not configured")
-
         return ChatAnthropic(
             model=model,
-            api_key=settings.anthropic_api_key,
+            api_key=api_key,
             temperature=kwargs.get("temperature", 0),
             **kwargs
         )
 
-    def _create_azure(self, model: str, **kwargs) -> AzureChatOpenAI:
+    def _create_azure(self, model: str, api_key: str, endpoint: str, **kwargs) -> AzureChatOpenAI:
         """Create Azure OpenAI LLM instance"""
-        if not settings.azure_openai_api_key or not settings.azure_openai_endpoint:
-            raise ValueError("Azure OpenAI credentials not configured")
-
         return AzureChatOpenAI(
-            deployment_name=settings.azure_openai_deployment or model,
-            azure_endpoint=settings.azure_openai_endpoint,
-            api_key=settings.azure_openai_api_key,
+            deployment_name=model,
+            azure_endpoint=endpoint,
+            api_key=api_key,
             temperature=kwargs.get("temperature", 0),
             **kwargs
         )
 
     def create_with_fallback(self, max_retries: int = 3, **kwargs) -> BaseChatModel:
         """Create LLM with fallback chain and retry logic"""
-        providers = [
-            (settings.llm_primary_provider, settings.llm_primary_model),
-            (settings.llm_fallback_provider, settings.llm_fallback_model)
-        ]
+        config = self._load_providers_from_db()
 
-        for provider, model in providers:
+        primary_id = config.get("primary")
+        fallback_id = config.get("fallback")
+
+        providers_to_try = []
+        if primary_id:
+            providers_to_try.append(primary_id)
+        if fallback_id:
+            providers_to_try.append(fallback_id)
+
+        if not providers_to_try:
+            raise RuntimeError("No providers configured")
+
+        for provider_id in providers_to_try:
             for attempt in range(max_retries):
                 try:
-                    llm = self.create_llm(provider, model, **kwargs)
-                    logger.info(f"Successfully created LLM: {provider}/{model}")
+                    llm = self.create_llm(provider_id, **kwargs)
+                    logger.info(f"Successfully created LLM: {provider_id}")
                     return llm
                 except Exception as e:
                     wait_time = 2 ** attempt
-                    logger.warning(f"Attempt {attempt + 1}/{max_retries} failed for {provider}: {e}")
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries} failed for {provider_id}: {e}")
                     if attempt < max_retries - 1:
                         time.sleep(wait_time)
 
