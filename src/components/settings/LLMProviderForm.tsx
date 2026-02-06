@@ -83,7 +83,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
             type="text"
             value={formData.name}
             onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-            className="w-full px-3 py-2 border rounded"
+            className="w-full px-3 py-2 border rounded text-text-main bg-bg-surface"
             required
           />
         </div>
@@ -93,7 +93,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
           <select
             value={formData.provider}
             onChange={e => setFormData(prev => ({ ...prev, provider: e.target.value }))}
-            className="w-full px-3 py-2 border rounded"
+            className="w-full px-3 py-2 border rounded text-text-main bg-bg-surface"
           >
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
@@ -108,7 +108,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
             type="password"
             value={formData.api_key}
             onChange={e => setFormData(prev => ({ ...prev, api_key: e.target.value }))}
-            className="w-full px-3 py-2 border rounded"
+            className="w-full px-3 py-2 border rounded text-text-main bg-bg-surface"
             required
           />
         </div>
@@ -119,7 +119,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
             type="text"
             value={formData.base_url}
             onChange={e => setFormData(prev => ({ ...prev, base_url: e.target.value }))}
-            className="w-full px-3 py-2 border rounded"
+            className="w-full px-3 py-2 border rounded text-text-main bg-bg-surface"
             placeholder="https://api.openai.com/v1"
           />
         </div>
@@ -144,7 +144,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
               type="text"
               value={manualModel}
               onChange={e => setManualModel(e.target.value)}
-              className="flex-1 px-3 py-2 border rounded"
+              className="flex-1 px-3 py-2 border rounded text-text-main bg-bg-surface"
               placeholder="手动添加模型"
             />
             <Button type="button" onClick={handleAddModel}>添加</Button>
