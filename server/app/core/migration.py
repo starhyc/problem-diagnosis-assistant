@@ -29,8 +29,7 @@ def migrate_env_to_db():
             "api_key": settings.openai_api_key,
             "base_url": None,
             "models": [settings.llm_primary_model if settings.llm_primary_provider == "openai" else settings.llm_fallback_model],
-            "is_primary": settings.llm_primary_provider == "openai",
-            "is_fallback": settings.llm_fallback_provider == "openai"
+            "is_default": settings.llm_primary_provider == "openai",
         }
 
         setting_repo.create({
@@ -50,8 +49,7 @@ def migrate_env_to_db():
             "api_key": settings.anthropic_api_key,
             "base_url": None,
             "models": [settings.llm_primary_model if settings.llm_primary_provider == "anthropic" else settings.llm_fallback_model],
-            "is_primary": settings.llm_primary_provider == "anthropic",
-            "is_fallback": settings.llm_fallback_provider == "anthropic"
+            "is_default": settings.llm_primary_provider == "anthropic",
         }
 
         setting_repo.create({
@@ -71,8 +69,7 @@ def migrate_env_to_db():
             "api_key": settings.azure_openai_api_key,
             "base_url": settings.azure_openai_endpoint,
             "models": [settings.azure_openai_deployment or "gpt-35-turbo"],
-            "is_primary": settings.llm_primary_provider == "azure",
-            "is_fallback": settings.llm_fallback_provider == "azure"
+            "is_default": settings.llm_primary_provider == "azure",
         }
 
         setting_repo.create({
