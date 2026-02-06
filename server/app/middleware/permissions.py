@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from app.api.deps import get_current_user
-from app.schemas.case import UserResponse
+from app.schemas.user import UserResponse
 
 
 def admin_required(current_user: UserResponse = Depends(get_current_user)) -> UserResponse:
