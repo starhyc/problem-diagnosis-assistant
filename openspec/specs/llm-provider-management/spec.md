@@ -45,13 +45,9 @@ The system SHALL allow administrators to update existing provider configurations
 - **WHEN** admin updates provider base URL
 - **THEN** system stores new URL and invalidates cached models
 
-#### Scenario: Set as primary provider
-- **WHEN** admin sets provider as primary
-- **THEN** system unsets previous primary and sets new primary
-
-#### Scenario: Set as fallback provider
-- **WHEN** admin sets provider as fallback
-- **THEN** system unsets previous fallback and sets new fallback
+#### Scenario: Set as default provider
+- **WHEN** admin sets provider as default
+- **THEN** system unsets previous default and sets new default
 
 #### Scenario: Enable/disable provider
 - **WHEN** admin toggles provider enabled status
@@ -61,16 +57,12 @@ The system SHALL allow administrators to update existing provider configurations
 The system SHALL allow administrators to delete provider configurations.
 
 #### Scenario: Delete unused provider
-- **WHEN** admin deletes provider that is not primary or fallback
+- **WHEN** admin deletes provider that is not default
 - **THEN** system removes provider record
 
-#### Scenario: Delete primary provider
-- **WHEN** admin attempts to delete primary provider
-- **THEN** system returns error requiring primary reassignment first
-
-#### Scenario: Delete fallback provider
-- **WHEN** admin deletes fallback provider
-- **THEN** system removes provider and clears fallback setting
+#### Scenario: Delete default provider
+- **WHEN** admin attempts to delete default provider
+- **THEN** system returns error requiring default reassignment first
 
 ### Requirement: Test provider connection
 The system SHALL allow administrators to test provider connectivity and authentication.
@@ -106,20 +98,16 @@ The system SHALL fetch available models from provider API when possible.
 - **WHEN** admin manually adds model name
 - **THEN** system adds model to provider's model list
 
-### Requirement: Primary and fallback selection
-The system SHALL enforce single primary and single fallback provider constraints.
+### Requirement: Default provider selection
+The system SHALL enforce single default provider constraint.
 
-#### Scenario: Only one primary allowed
-- **WHEN** admin sets provider as primary
-- **THEN** system automatically unsets previous primary provider
+#### Scenario: Only one default allowed
+- **WHEN** admin sets provider as default
+- **THEN** system automatically unsets previous default provider
 
-#### Scenario: Only one fallback allowed
-- **WHEN** admin sets provider as fallback
-- **THEN** system automatically unsets previous fallback provider
-
-#### Scenario: Same provider cannot be both
-- **WHEN** admin attempts to set provider as both primary and fallback
-- **THEN** system returns validation error
+#### Scenario: At least one provider must be default
+- **WHEN** system has multiple enabled providers
+- **THEN** system requires exactly one provider to be marked as default
 
 ### Requirement: Provider configuration validation
 The system SHALL validate provider configurations before saving.
