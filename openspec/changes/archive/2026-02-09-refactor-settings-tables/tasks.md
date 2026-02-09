@@ -57,7 +57,7 @@
 - [x] 7.3 Update DELETE /settings/llm-providers/{id} to implement auto-promotion logic
 - [x] 7.4 Add logging for auto-promotion events with old and new default provider names
 - [x] 7.5 Update GET /settings/llm-providers/{id}/models to ensure it's GET not POST
-- [ ] 7.6 Update test_llm_provider() to work with new table structure
+- [x] 7.6 Update test_llm_provider() to work with new table structure
 
 ## 8. External Tools API Endpoints
 
@@ -70,10 +70,10 @@
 
 ## 9. Database Configuration Cleanup
 
-- [ ] 9.1 Remove GET /settings/databases endpoint from server/app/api/v1/endpoints/settings.py
-- [ ] 9.2 Remove PUT /settings/databases/{id} endpoint
-- [ ] 9.3 Remove POST /settings/databases/{id}/test endpoint
-- [ ] 9.4 Remove database configuration schemas from server/app/schemas/case.py
+- [x] 9.1 Remove GET /settings/databases endpoint from server/app/api/v1/endpoints/settings.py
+- [x] 9.2 Remove PUT /settings/databases/{id} endpoint
+- [x] 9.3 Remove POST /settings/databases/{id}/test endpoint
+- [x] 9.4 Remove database configuration schemas from server/app/schemas/case.py
 - [x] 9.5 Remove getDatabases() from src/lib/api.ts
 - [x] 9.6 Remove updateDatabase() from src/lib/api.ts
 - [x] 9.7 Remove testDatabase() from src/lib/api.ts
@@ -82,7 +82,7 @@
 
 - [x] 10.1 Fix src/lib/api.ts fetchModels() to remove method: 'POST' (use GET)
 - [x] 10.2 Update fetchModels() to extract models from response.models
-- [ ] 10.3 Verify settingsStore.fetchModels() works with updated API
+- [x] 10.3 Verify settingsStore.fetchModels() works with updated API
 
 ## 11. Testing
 
