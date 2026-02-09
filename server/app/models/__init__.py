@@ -9,6 +9,9 @@ from app.models.case import (
     DashboardStats,
     Setting,
 )
+from app.models.llm_provider import LLMProvider
+from app.models.external_tool import ExternalTool
+from app.models.database_config import DatabaseConfig
 
 __all__ = [
     "User",
@@ -20,4 +23,7 @@ __all__ = [
     "HistoricalCase",
     "DashboardStats",
     "Setting",
+    "LLMProvider",
+    "ExternalTool",
+    "DatabaseConfig",
 ]

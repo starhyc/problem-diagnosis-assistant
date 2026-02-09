@@ -19,13 +19,26 @@ class EncryptionService:
     def _initialize(self):
         """Initialize Fernet cipher with encryption key"""
         key = os.getenv("ENCRYPTION_KEY")
+        environment = os.getenv("ENVIRONMENT", "development")
 
         if not key:
-            # Auto-generate key if missing
+            # Production: fail fast
+            if environment == "production":
+                raise ValueError(
+                    "ENCRYPTION_KEY must be set in production environment.\n"
+                    "Generate a key with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'\n"
+                    "Then add to .env: ENCRYPTION_KEY=<generated_key>"
+                )
+
+            # Development: generate temporary key with loud warning
             key = Fernet.generate_key().decode()
             logger.warning(
-                f"ENCRYPTION_KEY not set. Generated key: {key}\n"
-                "IMPORTANT: Set this in your .env file to persist encrypted data across restarts!"
+                f"\n{'='*70}\n"
+                f"⚠️  ENCRYPTION_KEY NOT SET - GENERATED TEMPORARY KEY\n"
+                f"{'='*70}\n"
+                f"Key: {key}\n"
+                f"Add to .env: ENCRYPTION_KEY={key}\n"
+                f"{'='*70}\n"
             )
 
         try:

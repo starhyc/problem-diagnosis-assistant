@@ -202,25 +202,3 @@ class TestConnectionResponse(BaseModel):
 
 class ModelListResponse(BaseModel):
     models: List[str]
-
-
-# Database configuration schemas
-class DatabaseConfigRequest(BaseModel):
-    type: str  # postgresql, redis
-    host: Optional[str] = None
-    port: Optional[int] = None
-    database: Optional[str] = None
-    user: Optional[str] = None
-    password: Optional[str] = None
-    url: Optional[str] = None  # For Redis URL format
-
-
-class DatabaseConfigResponse(BaseModel):
-    id: str
-    type: str
-    host: Optional[str] = None
-    port: Optional[int] = None
-    database: Optional[str] = None
-    user: Optional[str] = None
-    password: Optional[str] = None  # Will be decrypted
-    url: Optional[str] = None

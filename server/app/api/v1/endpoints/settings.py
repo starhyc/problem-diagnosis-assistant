@@ -11,9 +11,11 @@ from app.schemas.case import (
     TestConnectionResponse,
     ModelListResponse,
 )
+from app.schemas.llm_config import OpenAIConfig, AnthropicConfig, AzureConfig, CustomConfig
 from app.repositories.setting_repository import SettingRepository
 from app.middleware.permissions import admin_required
 from app.schemas.user import UserResponse
+from pydantic import ValidationError
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -60,7 +62,54 @@ def get_tools():
 @router.post("/tools/{tool_id}/test", response_model=TestConnectionResponse)
 def test_tool_connection(tool_id: str, user: UserResponse = Depends(admin_required)):
     """Test external tool connection"""
-    return TestConnectionResponse(success=True, message="Connection test not implemented")
+    tool = setting_repo.get_by_type_and_id("tool", tool_id)
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+
+    config = json.loads(tool.config) if tool.config else {}
+    url = config.get("url", "")
+
+    if not url:
+        return TestConnectionResponse(success=False, message="Tool URL not configured")
+
+    try:
+        import requests
+        from datetime import datetime
+
+        response = requests.get(url, timeout=5)
+
+        # Update tool with test results
+        from app.models.external_tool import ExternalTool
+        from app.core.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            db_tool = db.query(ExternalTool).filter(ExternalTool.tool_id == tool_id).first()
+            if db_tool:
+                db_tool.last_test_at = datetime.now()
+                db_tool.last_test_status = "success" if response.ok else "failed"
+                db.commit()
+        finally:
+            db.close()
+
+        if response.ok:
+            return TestConnectionResponse(
+                success=True,
+                message=f"Connected successfully (HTTP {response.status_code})"
+            )
+        else:
+            return TestConnectionResponse(
+                success=False,
+                message=f"Connection failed (HTTP {response.status_code})"
+            )
+
+    except requests.exceptions.Timeout:
+        return TestConnectionResponse(success=False, message="Connection timeout (5 seconds)")
+    except requests.exceptions.ConnectionError:
+        return TestConnectionResponse(success=False, message="Connection refused - service unreachable")
+    except Exception as e:
+        logger.error(f"Tool test failed for {tool_id}: {e}")
+        return TestConnectionResponse(success=False, message=f"Connection error: {str(e)}")
 
 
 # LLM Provider Management Endpoints
@@ -95,18 +144,33 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
     if existing:
         raise HTTPException(status_code=409, detail="Provider with this name already exists")
 
-    # Unset existing default if this is being set as default
-    if data.is_default:
-        setting_repo.set_default_provider(None)  # Unset all defaults first
-
-    # Create provider
-    setting_id = data.name.lower().replace(" ", "-")
-    config = {
+    # Validate config with Pydantic
+    config_data = {
         "provider": data.provider,
         "api_key": data.api_key,
         "base_url": data.base_url,
         "models": data.models or [],
     }
+
+    try:
+        if data.provider == "openai":
+            validated = OpenAIConfig(**config_data)
+        elif data.provider == "anthropic":
+            validated = AnthropicConfig(**config_data)
+        elif data.provider == "azure":
+            validated = AzureConfig(**config_data)
+        else:
+            validated = CustomConfig(**config_data)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Unset existing default if this is being set as default
+    if data.is_default:
+        setting_repo.set_default_provider(None)
+
+    # Create provider
+    setting_id = data.name.lower().replace(" ", "-")
+    config = validated.dict()
 
     setting_repo.create(**{
         "setting_type": "llm_provider",
@@ -157,6 +221,21 @@ def update_llm_provider(provider_id: str, data: LLMProviderUpdateRequest, user: 
     if data.enabled is not None:
         provider.enabled = data.enabled
 
+    # Validate updated config with Pydantic
+    try:
+        provider_type = config.get("provider")
+        if provider_type == "openai":
+            validated = OpenAIConfig(**config)
+        elif provider_type == "anthropic":
+            validated = AnthropicConfig(**config)
+        elif provider_type == "azure":
+            validated = AzureConfig(**config)
+        else:
+            validated = CustomConfig(**config)
+        config = validated.dict()
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     # Handle default update
     if data.is_default is not None and data.is_default:
         setting_repo.set_default_provider(provider_id)
@@ -187,10 +266,19 @@ def delete_llm_provider(provider_id: str, user: UserResponse = Depends(admin_req
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
 
-    if getattr(provider, 'is_default', False):
-        raise HTTPException(status_code=400, detail="Cannot delete default provider. Set another provider as default first.")
+    was_default = getattr(provider, 'is_default', False)
 
+    # Delete the provider
     setting_repo.delete(provider.id)
+
+    # If it was default, auto-promote the first enabled provider
+    if was_default:
+        remaining_providers = setting_repo.get_enabled_settings("llm_provider")
+        if remaining_providers:
+            setting_repo.set_default_provider(remaining_providers[0].setting_id)
+            logger.info(f"Auto-promoted '{remaining_providers[0].name}' as default provider after deleting '{provider.name}'")
+            return {"status": "deleted", "auto_promoted": remaining_providers[0].name}
+
     return {"status": "deleted"}
 
 

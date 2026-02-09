@@ -346,9 +346,8 @@ export const settingsApi = {
   },
 
   async fetchModels(id: string): Promise<string[]> {
-    return request(`/settings/llm-providers/${id}/models`, {
-      method: 'POST',
-    });
+    const response = await request<{ models: string[] }>(`/settings/llm-providers/${id}/models`);
+    return response.models;
   },
 
   async discoverModels(config: { provider: string; api_key: string; base_url?: string }): Promise<string[]> {
@@ -357,23 +356,6 @@ export const settingsApi = {
       body: JSON.stringify(config),
     });
     return response.models;
-  },
-
-  async getDatabases(): Promise<any[]> {
-    return request('/settings/databases');
-  },
-
-  async updateDatabase(id: string, config: any): Promise<any> {
-    return request(`/settings/databases/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(config),
-    });
-  },
-
-  async testDatabase(id: string): Promise<any> {
-    return request(`/settings/databases/${id}/test`, {
-      method: 'POST',
-    });
   },
 
   async getTools(): Promise<any[]> {
