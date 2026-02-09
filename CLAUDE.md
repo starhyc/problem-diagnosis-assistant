@@ -56,6 +56,24 @@ Default users after `init_db.py`:
 - engineer / engineer123 (工程师)
 - viewer / viewer123 (观察者)
 
+## OpenSpec Workflow
+
+- Follow the standard OpenSpec flow: exploration → artifacts (proposal, design, specs, tasks) → implementation → archive
+- Sync delta specs to main before archiving changes
+- Mark tasks complete only after testing integration
+
+## Code Quality Checks
+
+- Always verify imports are correct after multi-file changes, especially when moving or renaming modules
+- Run type checking (mypy for Python, tsc for TypeScript) before marking implementation complete
+- Test integration points between backend and frontend after making changes to both
+
+## Change Scope
+
+- Start with minimal changes that directly address the requirement
+- Avoid refactoring unrelated code unless explicitly requested
+- When implementing features, focus on core functionality first, then enhancements
+
 ## Architecture
 
 ### State Management (Zustand)
