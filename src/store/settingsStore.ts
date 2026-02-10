@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { LLMProvider, MCPServer, SkillPackage, TestResult, Tool } from '@/types/settings';
+import { AuditEntry, LLMProvider, MCPServer, ManagedUser, SkillPackage, TestResult, Tool } from '@/types/settings';
 import { settingsApi } from '@/lib/api';
 
 interface SettingsState {
@@ -7,6 +7,9 @@ interface SettingsState {
   tools: Tool[];
   mcpServers: MCPServer[];
   skills: SkillPackage[];
+  users: ManagedUser[];
+  moduleAuditLogs: Record<string, AuditEntry[]>;
+  moduleRecentChanges: Record<string, AuditEntry[]>;
   loading: boolean;
   error: string | null;
 
@@ -30,6 +33,16 @@ interface SettingsState {
   uploadSkill: (file: File) => Promise<void>;
   toggleSkill: (id: string, enabled: boolean) => Promise<void>;
   executeSkill: (id: string, approvalGranted: boolean) => Promise<any>;
+  testSkill: (id: string) => Promise<TestResult>;
+
+  loadUsers: () => Promise<void>;
+  createUser: (payload: { username: string; email: string; password: string; display_name: string; role: string }) => Promise<void>;
+  updateUserStatus: (userId: number, isActive: boolean) => Promise<void>;
+  updateUserRole: (userId: number, role: string) => Promise<void>;
+
+  loadModuleAuditLogs: (module: string) => Promise<void>;
+  loadModuleRecentChanges: (module: string) => Promise<void>;
+  logSystemParamsChange: (action: string, detail: Record<string, any>) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -37,6 +50,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   tools: [],
   mcpServers: [],
   skills: [],
+  users: [],
+  moduleAuditLogs: {},
+  moduleRecentChanges: {},
   loading: false,
   error: null,
 
@@ -167,5 +183,47 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   executeSkill: async (id, approvalGranted) => {
     return await settingsApi.executeSkill(id, approvalGranted);
+  },
+
+  testSkill: async (id) => {
+    return await settingsApi.testSkill(id);
+  },
+
+  loadUsers: async () => {
+    try {
+      const users = await settingsApi.getUsers();
+      set({ users });
+    } catch (error: any) {
+      set({ error: error.message });
+    }
+  },
+
+  createUser: async (payload) => {
+    const created = await settingsApi.createUser(payload);
+    set(state => ({ users: [...state.users, created] }));
+  },
+
+  updateUserStatus: async (userId, isActive) => {
+    const updated = await settingsApi.updateUserStatus(userId, isActive);
+    set(state => ({ users: state.users.map(u => u.id === userId ? updated : u) }));
+  },
+
+  updateUserRole: async (userId, role) => {
+    const updated = await settingsApi.updateUserRole(userId, role);
+    set(state => ({ users: state.users.map(u => u.id === userId ? updated : u) }));
+  },
+
+  loadModuleAuditLogs: async (module) => {
+    const logs = await settingsApi.getModuleAuditLogs(module);
+    set(state => ({ moduleAuditLogs: { ...state.moduleAuditLogs, [module]: logs } }));
+  },
+
+  loadModuleRecentChanges: async (module) => {
+    const changes = await settingsApi.getModuleRecentChanges(module);
+    set(state => ({ moduleRecentChanges: { ...state.moduleRecentChanges, [module]: changes } }));
+  },
+
+  logSystemParamsChange: async (action, detail) => {
+    await settingsApi.logSystemParamsChange(action, detail);
   },
 }));

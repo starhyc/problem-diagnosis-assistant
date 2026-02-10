@@ -23,6 +23,12 @@ export interface MCPServer {
   endpoint: string;
   enabled: boolean;
   version: string;
+  status?: string;
+  last_test_at?: string;
+  last_test_status?: string;
+  created_by?: string;
+  updated_by?: string;
+  updated_at?: string;
 }
 
 export interface SkillPackage {
@@ -33,6 +39,32 @@ export interface SkillPackage {
   version: string;
   entrypoint: string;
   permissions: Record<string, boolean | number | string>;
+  status?: string;
+  last_test_at?: string;
+  last_test_status?: string;
+  created_by?: string;
+  updated_by?: string;
+  updated_at?: string;
+}
+
+export interface ManagedUser {
+  id: number;
+  username: string;
+  email: string;
+  display_name: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AuditEntry {
+  id: string;
+  module: string;
+  action: string;
+  actor: string;
+  target_id: string;
+  detail: Record<string, any>;
+  timestamp: string;
 }
 
 export interface TestResult {

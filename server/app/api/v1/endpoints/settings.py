@@ -15,11 +15,25 @@ from app.schemas.llm_config import OpenAIConfig, AnthropicConfig, AzureConfig, C
 from app.repositories.setting_repository import SettingRepository
 from app.middleware.permissions import admin_required
 from app.schemas.user import UserResponse
+from app.services.settings_audit import SettingsAuditService
 from pydantic import ValidationError
 
 logger = get_logger(__name__)
 router = APIRouter()
 setting_repo = SettingRepository()
+audit_service = SettingsAuditService()
+
+
+@router.post("/system-params/log", response_model=dict)
+def log_system_params_change(payload: dict, user: UserResponse = Depends(admin_required)):
+    entry = audit_service.record(
+        module="system-params",
+        action=payload.get("action", "update"),
+        actor=user.username,
+        target_id=payload.get("target_id", "system"),
+        detail=payload.get("detail", {}),
+    )
+    return {"status": "ok", "entry": entry}
 
 DEFAULT_TOOLS = [
     {"id": "elk", "name": "ELK Stack", "connected": True, "url": "https://elk.internal:9200"},
@@ -93,11 +107,13 @@ def test_tool_connection(tool_id: str, user: UserResponse = Depends(admin_requir
             db.close()
 
         if response.ok:
+            audit_service.record(module="external-tools", action="test-connectivity", actor=user.username, target_id=tool_id, detail={"success": True, "status_code": response.status_code})
             return TestConnectionResponse(
                 success=True,
                 message=f"Connected successfully (HTTP {response.status_code})"
             )
         else:
+            audit_service.record(module="external-tools", action="test-connectivity", actor=user.username, target_id=tool_id, detail={"success": False, "status_code": response.status_code})
             return TestConnectionResponse(
                 success=False,
                 message=f"Connection failed (HTTP {response.status_code})"
@@ -187,6 +203,7 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
 
     created = setting_repo.get_by_type_and_id("llm_provider", setting_id)
     config = json.loads(created.config)
+    audit_service.record(module="llm", action="create", actor=user.username, target_id=setting_id, detail={"provider": config.get("provider")})
 
     return LLMProviderResponse(
         id=created.setting_id,
@@ -246,6 +263,7 @@ def update_llm_provider(provider_id: str, data: LLMProviderUpdateRequest, user: 
 
     updated = setting_repo.get_by_type_and_id("llm_provider", provider_id)
     config = json.loads(updated.config)
+    audit_service.record(module="llm", action="update", actor=user.username, target_id=provider_id, detail={"enabled": updated.enabled})
 
     return LLMProviderResponse(
         id=updated.setting_id,
@@ -270,6 +288,7 @@ def delete_llm_provider(provider_id: str, user: UserResponse = Depends(admin_req
 
     # Delete the provider
     setting_repo.delete(provider.id)
+    audit_service.record(module="llm", action="delete", actor=user.username, target_id=provider_id, detail={})
 
     # If it was default, auto-promote the first enabled provider
     if was_default:
@@ -332,9 +351,12 @@ def test_llm_provider(provider_id: str, user: UserResponse = Depends(admin_requi
             )
             llm.invoke("test")
 
-        return TestConnectionResponse(success=True, message="Connection successful")
+        result = TestConnectionResponse(success=True, message="Connection successful")
+        audit_service.record(module="llm", action="test-connectivity", actor=user.username, target_id=provider_id, detail={"success": True})
+        return result
     except Exception as e:
         logger.error(f"Connection test failed for {provider_id}: {e}")
+        audit_service.record(module="llm", action="test-connectivity", actor=user.username, target_id=provider_id, detail={"success": False, "message": str(e)})
         return TestConnectionResponse(success=False, message=str(e))
 
 
