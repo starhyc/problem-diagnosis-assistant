@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { investigationApi } from '../lib/api';
 import { wsService, WSMessage, ConfirmationRequired } from '../lib/websocket';
 import { AgentTrace } from '../types/trace';
+import { DiagnosisMode } from '../types/agent';
 
 export interface AgentMessage {
   id: string;
@@ -47,7 +48,7 @@ interface DiagnosisState {
   selectedAgentId: string | null;
   rootAgentIds: string[];
 
-  startDiagnosis: (agentType: string, symptom: string, description: string) => void;
+  startDiagnosis: (agentType: string, symptom: string, description: string, mode?: DiagnosisMode) => void;
   stopDiagnosis: () => void;
   approveAction: () => void;
   rejectAction: () => void;
@@ -255,9 +256,9 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
     wsService.disconnect();
   },
 
-  startDiagnosis: async (agentType: string, symptom: string, description: string) => {
+  startDiagnosis: async (agentType: string, symptom: string, description: string, mode: DiagnosisMode = 'auto') => {
     try {
-      await investigationApi.startDiagnosis(agentType, symptom, description);
+      await investigationApi.startDiagnosis(agentType, symptom, description, undefined, undefined, mode);
 
       const caseId = `CASE-${agentType.toUpperCase()}-${Date.now()}`;
 
@@ -284,7 +285,7 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
         pendingConfirmation: null,
       });
 
-      wsService.startDiagnosis(symptom, description, agentType);
+      wsService.startDiagnosis(symptom, description, agentType, undefined, mode);
     } catch (error) {
       console.error('[DiagnosisStore] Failed to start diagnosis:', error);
       set({ isRunning: false });

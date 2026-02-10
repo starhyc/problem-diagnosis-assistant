@@ -5,10 +5,12 @@ from app.core.database import get_db
 from app.services.workflow_engine import workflow_engine, DiagnosisState
 from app.services.state_manager import state_manager
 from app.core.event_publisher import event_publisher
-from typing import Dict, Any
+from app.services.mode_router import mode_router, DiagnosisMode, TaskFeatures
+from typing import Dict, Any, Optional
 import asyncio
 
 logger = get_logger(__name__)
+
 
 class DiagnosisTask(Task):
     def on_failure(self, exc, task_id, args, kwargs, einfo):
@@ -21,29 +23,58 @@ class DiagnosisTask(Task):
                 "error": str(exc)
             })
 
+
+def _normalize_mode(mode: Optional[str]) -> str:
+    if not mode:
+        return DiagnosisMode.PRD_STANDARD.value
+
+    mode_alias = {
+        "simple": DiagnosisMode.PRD_MINIMAL.value,
+        "complex": DiagnosisMode.PRD_DEEP.value,
+        "auto": "auto",
+    }
+    return mode_alias.get(mode, mode)
+
+
 @celery_app.task(bind=True, base=DiagnosisTask, max_retries=3)
-def run_diagnosis(self, session_id: str, symptom: str, mode: str = "simple") -> Dict[str, Any]:
+def run_diagnosis(self, session_id: str, symptom: str, mode: str = DiagnosisMode.PRD_STANDARD.value, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run diagnosis workflow as Celery task"""
     logger.info(f"Starting diagnosis task for session: {session_id}")
 
     try:
-        # Update task progress
         self.update_state(state='PROGRESS', meta={'progress': 0, 'phase': 'initializing'})
 
-        # Publish start event
+        normalized_mode = _normalize_mode(mode)
+        context = context or {}
+        decision_trace = []
+
+        if normalized_mode == "auto":
+            features = TaskFeatures(
+                step_complexity=context.get("step_complexity", 4),
+                cross_domain_count=context.get("cross_domain_count", 1),
+                uncertainty=context.get("uncertainty", 3),
+            )
+            recommendation = mode_router.recommend_mode(features)
+            selected_mode = recommendation["mode"]
+            decision_trace.append({"stage": "auto_recommend", **recommendation})
+        else:
+            selected_mode = normalized_mode
+            decision_trace.append({"stage": "manual_or_default", "mode": selected_mode})
+
         event_publisher.publish_diagnosis_event(session_id, {
             "type": "diagnosis_started",
             "session_id": session_id,
             "symptom": symptom,
-            "task_id": self.request.id
+            "task_id": self.request.id,
+            "mode": selected_mode,
+            "mode_decision": decision_trace,
         })
 
-        # Initialize state
-        state = state_manager.create_state(session_id)
+        state_manager.create_state(session_id)
         self.update_state(state='PROGRESS', meta={'progress': 20, 'phase': 'workflow_execution'})
 
-        # Create initial workflow state
         workflow_state: DiagnosisState = {
+            "session_id": session_id,
             "symptom": symptom,
             "messages": [],
             "hypothesis_tree": {},
@@ -52,28 +83,21 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "simple") -> 
             "next_action": None,
             "current_phase": "init",
             "paused": False,
-            "cancelled": False
+            "cancelled": False,
+            "mode": selected_mode,
+            "mode_history": decision_trace.copy(),
         }
 
-        # Run workflow
-        if mode == "simple":
-            workflow = workflow_engine.create_simple_workflow()
-            self.update_state(state='PROGRESS', meta={'progress': 50, 'phase': 'simple_workflow'})
-            result = asyncio.run(workflow(workflow_state))
-        else:
-            workflow = workflow_engine.create_complex_workflow()
-            self.update_state(state='PROGRESS', meta={'progress': 50, 'phase': 'complex_workflow'})
-            result = asyncio.run(workflow.ainvoke(workflow_state))
+        self.update_state(state='PROGRESS', meta={'progress': 50, 'phase': f'{selected_mode}_workflow'})
+        result = asyncio.run(workflow_engine.run(selected_mode, workflow_state))
 
         self.update_state(state='PROGRESS', meta={'progress': 80, 'phase': 'saving_results'})
 
-        # Save final state
         db = next(get_db())
         state_manager.update_state(session_id, result)
         state_manager.save_snapshot(session_id, db)
-        state_manager.record_event(session_id, "diagnosis_completed", {"result": result}, db)
+        state_manager.record_event(session_id, "diagnosis_completed", {"result": result, "mode_decision": decision_trace}, db)
 
-        # Persist task result
         from sqlalchemy import text
         db.execute(
             text("""
@@ -90,15 +114,22 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "simple") -> 
         )
         db.commit()
 
-        # Publish completion event
         event_publisher.publish_diagnosis_event(session_id, {
             "type": "diagnosis_completed",
             "session_id": session_id,
-            "confidence": result.get("confidence", 0)
+            "confidence": result.get("confidence", 0),
+            "mode": result.get("mode", selected_mode),
+            "mode_decision": result.get("mode_history", decision_trace),
         })
 
         logger.info(f"Diagnosis task completed for session: {session_id}")
-        return {"status": "completed", "session_id": session_id, "result": result}
+        return {
+            "status": "completed",
+            "session_id": session_id,
+            "mode": result.get("mode", selected_mode),
+            "mode_decision": result.get("mode_history", decision_trace),
+            "result": result,
+        }
 
     except Exception as e:
         logger.error(f"Diagnosis task error for session {session_id}: {e}")

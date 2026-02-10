@@ -12,6 +12,15 @@ export type AgentType = 'diagnosis' | 'qa' | 'log_analysis';
 
 export type ModelType = 'gpt-4' | 'gpt-3.5-turbo' | 'claude-3' | 'qwen-max' | 'deepseek-chat';
 
+export type DiagnosisMode = 'auto' | 'prd_minimal' | 'prd_standard' | 'prd_deep' | 'prd_swarm';
+
+export interface DiagnosisModeInfo {
+  id: DiagnosisMode;
+  name: string;
+  description: string;
+  strategy: 'auto' | 'manual';
+}
+
 export interface AgentTypeInfo {
   id: AgentType;
   name: string;
@@ -34,6 +43,14 @@ export interface FileInputConfig {
   multiple: boolean;
   optional: boolean;
 }
+
+export const DIAGNOSIS_MODES: DiagnosisModeInfo[] = [
+  { id: 'auto', name: '自动推荐', description: '根据任务特征自动选择模式', strategy: 'auto' },
+  { id: 'prd_minimal', name: 'PRD Minimal', description: '轻量流程，快速定位', strategy: 'manual' },
+  { id: 'prd_standard', name: 'PRD Standard', description: '标准流程，平衡速度与深度', strategy: 'manual' },
+  { id: 'prd_deep', name: 'PRD Deep', description: '深度流程，包含多阶段分析', strategy: 'manual' },
+  { id: 'prd_swarm', name: 'PRD Swarm', description: '协同流程，多Agent并发深度分析', strategy: 'manual' },
+];
 
 export const AGENT_TYPES: AgentTypeInfo[] = [
   {
