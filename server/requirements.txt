@@ -20,3 +20,4 @@ redis==5.0.0
 psycopg2-binary==2.9.9
 langchain-anthropic>=0.2.0   # Unpinned to allow patch fixes
 cryptography==46.0.4
+pyyaml==6.0.2

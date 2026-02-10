@@ -160,6 +160,26 @@ export interface SettingsData {
   tools: Tool[];
 }
 
+
+export interface MCPServer {
+  id: string;
+  name: string;
+  transport: string;
+  endpoint: string;
+  enabled: boolean;
+  version: string;
+}
+
+export interface SkillPackage {
+  id: string;
+  name: string;
+  enabled: boolean;
+  description?: string;
+  version: string;
+  entrypoint: string;
+  permissions: Record<string, any>;
+}
+
 class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -174,9 +194,13 @@ async function request<T>(
   const token = localStorage.getItem('aiops_token');
   
   const headers: HeadersInit = {
-    'Content-Type': 'application/json',
     ...options.headers,
   };
+
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -367,6 +391,57 @@ export const settingsApi = {
   async testTool(id: string): Promise<any> {
     return request(`/settings/tools/${id}/test`, {
       method: 'POST',
+    });
+  },
+
+  async getMCPServers(): Promise<MCPServer[]> {
+    return request('/settings/mcp-servers');
+  },
+
+  async saveMCPServer(server: MCPServer): Promise<MCPServer> {
+    return request('/settings/mcp-servers', {
+      method: 'POST',
+      body: JSON.stringify(server),
+    });
+  },
+
+  async toggleMCPServer(id: string, enabled: boolean): Promise<MCPServer> {
+    return request(`/settings/mcp-servers/${id}/enabled`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  async testMCPServer(id: string): Promise<any> {
+    return request(`/settings/mcp-servers/${id}/test`, {
+      method: 'POST',
+    });
+  },
+
+  async getSkills(): Promise<SkillPackage[]> {
+    return request('/settings/skills');
+  },
+
+  async uploadSkill(file: File): Promise<SkillPackage> {
+    const form = new FormData();
+    form.append('file', file);
+    return request('/settings/skills/upload', {
+      method: 'POST',
+      body: form,
+    });
+  },
+
+  async toggleSkill(id: string, enabled: boolean): Promise<SkillPackage> {
+    return request(`/settings/skills/${id}/enabled`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  async executeSkill(id: string, approvalGranted: boolean): Promise<any> {
+    return request(`/settings/skills/${id}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ approval_granted: approvalGranted }),
     });
   },
 };

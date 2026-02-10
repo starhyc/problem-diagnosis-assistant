@@ -1,10 +1,12 @@
 import { create } from 'zustand';
-import { LLMProvider, TestResult, Tool } from '@/types/settings';
+import { LLMProvider, MCPServer, SkillPackage, TestResult, Tool } from '@/types/settings';
 import { settingsApi } from '@/lib/api';
 
 interface SettingsState {
   llmProviders: LLMProvider[];
   tools: Tool[];
+  mcpServers: MCPServer[];
+  skills: SkillPackage[];
   loading: boolean;
   error: string | null;
 
@@ -18,11 +20,23 @@ interface SettingsState {
 
   loadTools: () => Promise<void>;
   testTool: (id: string) => Promise<TestResult>;
+
+  loadMCPServers: () => Promise<void>;
+  saveMCPServer: (server: MCPServer) => Promise<void>;
+  toggleMCPServer: (id: string, enabled: boolean) => Promise<void>;
+  testMCPServer: (id: string) => Promise<TestResult>;
+
+  loadSkills: () => Promise<void>;
+  uploadSkill: (file: File) => Promise<void>;
+  toggleSkill: (id: string, enabled: boolean) => Promise<void>;
+  executeSkill: (id: string, approvalGranted: boolean) => Promise<any>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   llmProviders: [],
   tools: [],
+  mcpServers: [],
+  skills: [],
   loading: false,
   error: null,
 
@@ -99,5 +113,59 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   testTool: async (id) => {
     return await settingsApi.testTool(id);
+  },
+
+  loadMCPServers: async () => {
+    try {
+      const mcpServers = await settingsApi.getMCPServers();
+      set({ mcpServers });
+    } catch (error: any) {
+      set({ error: error.message });
+    }
+  },
+
+  saveMCPServer: async (server) => {
+    const saved = await settingsApi.saveMCPServer(server);
+    set(state => ({
+      mcpServers: [...state.mcpServers.filter(m => m.id !== saved.id), saved],
+    }));
+  },
+
+  toggleMCPServer: async (id, enabled) => {
+    const updated = await settingsApi.toggleMCPServer(id, enabled);
+    set(state => ({
+      mcpServers: state.mcpServers.map(m => (m.id === id ? updated : m)),
+    }));
+  },
+
+  testMCPServer: async (id) => {
+    return await settingsApi.testMCPServer(id);
+  },
+
+  loadSkills: async () => {
+    try {
+      const skills = await settingsApi.getSkills();
+      set({ skills });
+    } catch (error: any) {
+      set({ error: error.message });
+    }
+  },
+
+  uploadSkill: async (file) => {
+    const uploaded = await settingsApi.uploadSkill(file);
+    set(state => ({
+      skills: [...state.skills.filter(s => s.id !== uploaded.id), uploaded],
+    }));
+  },
+
+  toggleSkill: async (id, enabled) => {
+    const updated = await settingsApi.toggleSkill(id, enabled);
+    set(state => ({
+      skills: state.skills.map(s => (s.id === id ? updated : s)),
+    }));
+  },
+
+  executeSkill: async (id, approvalGranted) => {
+    return await settingsApi.executeSkill(id, approvalGranted);
   },
 }));
