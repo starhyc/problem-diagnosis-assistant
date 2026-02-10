@@ -22,6 +22,11 @@ class DiagnosisTask(Task):
                 "task_id": task_id,
                 "error": str(exc)
             })
+            try:
+                db = next(get_db())
+                _record_task_status(session_id, db, "failed", {"stage": "task_failed", "task_id": task_id, "error": str(exc)})
+            except Exception as status_exc:
+                logger.warning(f"Failed to persist failed task status for {session_id}: {status_exc}")
 
 
 def _normalize_mode(mode: Optional[str]) -> str:
@@ -39,6 +44,13 @@ def _normalize_mode(mode: Optional[str]) -> str:
     return mode_alias.get(normalized, normalized)
 
 
+def _record_task_status(session_id: str, db, status: str, extra: Optional[Dict[str, Any]] = None):
+    try:
+        state_manager.transition_task_status(session_id, status, db, event_data=extra or {})
+    except ValueError as exc:
+        logger.warning(f"Skip invalid task_status transition for {session_id}: {exc}")
+
+
 @celery_app.task(bind=True, base=DiagnosisTask, max_retries=3)
 def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run diagnosis workflow as Celery task"""
@@ -46,6 +58,7 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", conte
 
     try:
         self.update_state(state='PROGRESS', meta={'progress': 0, 'phase': 'initializing'})
+        db = next(get_db())
 
         normalized_mode = _normalize_mode(mode)
         context = context or {}
@@ -81,6 +94,8 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", conte
         })
 
         state_manager.create_state(session_id)
+        _record_task_status(session_id, db, "submitted", {"stage": "task_submitted", "task_id": self.request.id})
+        _record_task_status(session_id, db, "running", {"stage": "task_execution", "task_id": self.request.id})
         self.update_state(state='PROGRESS', meta={'progress': 20, 'phase': 'workflow_execution'})
 
         workflow_state: DiagnosisState = {
@@ -105,10 +120,21 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", conte
 
         self.update_state(state='PROGRESS', meta={'progress': 80, 'phase': 'saving_results'})
 
-        db = next(get_db())
         state_manager.update_state(session_id, result)
         state_manager.save_snapshot(session_id, db)
         state_manager.record_event(session_id, "diagnosis_completed", {"result": result, "mode_decision": decision_trace}, db)
+
+        result_status = result.get("task_status")
+        if result.get("cancelled"):
+            _record_task_status(session_id, db, "canceled", {"stage": "task_cancelled", "task_id": self.request.id})
+        elif result_status == "waiting_user":
+            _record_task_status(session_id, db, "waiting_user", {"stage": "waiting_confirmation", "task_id": self.request.id})
+        elif result_status == "retrying":
+            _record_task_status(session_id, db, "retrying", {"stage": "task_retrying", "task_id": self.request.id})
+        elif result_status == "failed":
+            _record_task_status(session_id, db, "failed", {"stage": "task_failed", "task_id": self.request.id})
+        else:
+            _record_task_status(session_id, db, "completed", {"stage": "task_completed", "task_id": self.request.id})
 
         from sqlalchemy import text
         db.execute(
@@ -145,4 +171,6 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", conte
 
     except Exception as e:
         logger.error(f"Diagnosis task error for session {session_id}: {e}")
+        db = next(get_db())
+        _record_task_status(session_id, db, "retrying", {"stage": "task_retrying", "task_id": self.request.id, "error": str(e)})
         raise self.retry(exc=e, countdown=2 ** self.request.retries)
