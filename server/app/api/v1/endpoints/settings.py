@@ -142,7 +142,8 @@ def get_llm_providers(user: UserResponse = Depends(admin_required)):
             id=provider.setting_id,
             name=provider.name,
             provider=config.get("provider", ""),
-            api_key=config.get("api_key", ""),
+            api_key_masked=config.get("api_key_masked", ""),
+            has_api_key=config.get("has_api_key", False),
             base_url=config.get("base_url"),
             models=config.get("models", []),
             is_default=getattr(provider, 'is_default', False),
@@ -209,7 +210,8 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
         id=created.setting_id,
         name=created.name,
         provider=config["provider"],
-        api_key=config["api_key"],
+        api_key_masked=config.get("api_key_masked", ""),
+        has_api_key=config.get("has_api_key", False),
         base_url=config.get("base_url"),
         models=config.get("models", []),
         is_default=getattr(created, 'is_default', False),
@@ -220,7 +222,7 @@ def create_llm_provider(data: LLMProviderRequest, user: UserResponse = Depends(a
 @router.put("/llm-providers/{provider_id}", response_model=LLMProviderResponse)
 def update_llm_provider(provider_id: str, data: LLMProviderUpdateRequest, user: UserResponse = Depends(admin_required)):
     """Update an existing LLM provider configuration"""
-    provider = setting_repo.get_by_type_and_id("llm_provider", provider_id)
+    provider = setting_repo.get_by_type_and_id("llm_provider", provider_id, include_api_key=True)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
 
@@ -229,7 +231,7 @@ def update_llm_provider(provider_id: str, data: LLMProviderUpdateRequest, user: 
     # Update fields
     if data.name is not None:
         provider.name = data.name
-    if data.api_key is not None:
+    if data.api_key is not None and data.api_key.strip():
         config["api_key"] = data.api_key
     if data.base_url is not None:
         config["base_url"] = data.base_url
@@ -269,7 +271,8 @@ def update_llm_provider(provider_id: str, data: LLMProviderUpdateRequest, user: 
         id=updated.setting_id,
         name=updated.name,
         provider=config["provider"],
-        api_key=config["api_key"],
+        api_key_masked=config.get("api_key_masked", ""),
+        has_api_key=config.get("has_api_key", False),
         base_url=config.get("base_url"),
         models=config.get("models", []),
         is_default=getattr(updated, 'is_default', False),
@@ -280,7 +283,7 @@ def update_llm_provider(provider_id: str, data: LLMProviderUpdateRequest, user: 
 @router.delete("/llm-providers/{provider_id}")
 def delete_llm_provider(provider_id: str, user: UserResponse = Depends(admin_required)):
     """Delete an LLM provider configuration"""
-    provider = setting_repo.get_by_type_and_id("llm_provider", provider_id)
+    provider = setting_repo.get_by_type_and_id("llm_provider", provider_id, include_api_key=True)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
 
@@ -304,7 +307,7 @@ def delete_llm_provider(provider_id: str, user: UserResponse = Depends(admin_req
 @router.post("/llm-providers/{provider_id}/test", response_model=TestConnectionResponse)
 def test_llm_provider(provider_id: str, user: UserResponse = Depends(admin_required)):
     """Test LLM provider connection"""
-    provider = setting_repo.get_by_type_and_id("llm_provider", provider_id)
+    provider = setting_repo.get_by_type_and_id("llm_provider", provider_id, include_api_key=True)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
 
@@ -312,6 +315,9 @@ def test_llm_provider(provider_id: str, user: UserResponse = Depends(admin_requi
     provider_type = config.get("provider")
     api_key = config.get("api_key")
     base_url = config.get("base_url")
+
+    if not api_key:
+        return TestConnectionResponse(success=False, message="API key not configured")
 
     try:
         if provider_type == "openai":
@@ -363,7 +369,7 @@ def test_llm_provider(provider_id: str, user: UserResponse = Depends(admin_requi
 @router.get("/llm-providers/{provider_id}/models", response_model=ModelListResponse)
 def get_llm_provider_models(provider_id: str, user: UserResponse = Depends(admin_required)):
     """Fetch available models from LLM provider API"""
-    provider = setting_repo.get_by_type_and_id("llm_provider", provider_id)
+    provider = setting_repo.get_by_type_and_id("llm_provider", provider_id, include_api_key=True)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
 
@@ -371,6 +377,9 @@ def get_llm_provider_models(provider_id: str, user: UserResponse = Depends(admin
     provider_type = config.get("provider")
     api_key = config.get("api_key")
     base_url = config.get("base_url")
+
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key not configured")
 
     try:
         if provider_type == "openai" or provider_type == "custom":

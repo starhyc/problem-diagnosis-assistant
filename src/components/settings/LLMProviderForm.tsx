@@ -32,7 +32,7 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
       setFormData({
         name: provider.name,
         provider: provider.provider,
-        api_key: provider.api_key,
+        api_key: '',
         base_url: provider.base_url || '',
         models: provider.models,
         is_default: provider.is_default,
@@ -51,8 +51,9 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
 
   // Check if auto-discovery should be triggered
   const shouldTriggerAutoDiscover = (): boolean => {
-    // API key is required
-    if (!formData.api_key.trim()) return false;
+    // Existing providers can use persisted key; new providers require input key
+    if (!provider?.id && !formData.api_key.trim()) return false;
+    if (provider?.id && !formData.api_key.trim() && !provider.has_api_key) return false;
 
     // Check by provider type
     if (formData.provider === 'openai') {
@@ -137,7 +138,11 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
 
     try {
       if (provider) {
-        await updateLLMProvider(provider.id, formData);
+        const updatePayload = { ...formData };
+        if (!updatePayload.api_key.trim()) {
+          delete updatePayload.api_key;
+        }
+        await updateLLMProvider(provider.id, updatePayload);
       } else {
         await addLLMProvider(formData);
       }
@@ -190,9 +195,14 @@ export function LLMProviderForm({ provider, onClose }: LLMProviderFormProps) {
             value={formData.api_key}
             onChange={e => setFormData(prev => ({ ...prev, api_key: e.target.value }))}
             className="w-full px-3 py-2 border border-border-subtle rounded text-text-main bg-bg-surface focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-            placeholder="sk-..."
-            required
+            placeholder={provider ? (provider.api_key_masked || "留空表示不修改") : "sk-..."}
+            required={!provider}
           />
+          {provider && (
+            <p className="mt-1 text-xs text-text-muted">
+              留空表示不修改当前密钥；填写新值将覆盖当前密钥。
+            </p>
+          )}
         </div>
 
         {needsBaseUrl && (

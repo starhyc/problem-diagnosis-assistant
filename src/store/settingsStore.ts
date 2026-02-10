@@ -1,5 +1,15 @@
 import { create } from 'zustand';
 import { AuditEntry, LLMProvider, MCPServer, ManagedUser, SkillPackage, TestResult, Tool } from '@/types/settings';
+type LLMProviderPayload = {
+  name: string;
+  provider: string;
+  api_key?: string;
+  base_url?: string;
+  models: string[];
+  is_default: boolean;
+  enabled: boolean;
+};
+
 import { settingsApi } from '@/lib/api';
 
 interface SettingsState {
@@ -14,8 +24,8 @@ interface SettingsState {
   error: string | null;
 
   loadLLMProviders: () => Promise<void>;
-  addLLMProvider: (provider: Omit<LLMProvider, 'id'>) => Promise<void>;
-  updateLLMProvider: (id: string, provider: Partial<LLMProvider>) => Promise<void>;
+  addLLMProvider: (provider: LLMProviderPayload) => Promise<void>;
+  updateLLMProvider: (id: string, provider: Partial<LLMProviderPayload>) => Promise<void>;
   deleteLLMProvider: (id: string) => Promise<void>;
   testLLMProvider: (id: string) => Promise<TestResult>;
   fetchModels: (id: string) => Promise<string[]>;
