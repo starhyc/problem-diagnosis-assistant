@@ -10,6 +10,7 @@ import {
   LogOut,
   User,
   Shield,
+  History,
 } from 'lucide-react';
 import { useAuthStore, hasPermission } from '../store/authStore';
 
@@ -21,6 +22,7 @@ const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, minRole: 'viewer' as const },
   { path: '/investigation', label: '诊断工作台', icon: Search, minRole: 'viewer' as const },
   { path: '/knowledge', label: '知识浏览器', icon: BookOpen, minRole: 'viewer' as const },
+  { path: '/history', label: '历史回放', icon: History, minRole: 'viewer' as const },
   { path: '/settings', label: '系统设置', icon: Settings, minRole: 'admin' as const },
 ];
 

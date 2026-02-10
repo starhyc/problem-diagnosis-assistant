@@ -8,7 +8,10 @@ from app.schemas.case import (
     KnowledgeNodeResponse,
     KnowledgeEdgeResponse,
     HistoricalCaseResponse,
+    HistoricalCaseCreateRequest,
+    HistoricalCaseUpdateRequest,
 )
+from datetime import datetime
 from app.repositories.knowledge_repository import KnowledgeRepository
 
 logger = get_logger(__name__)
@@ -244,3 +247,65 @@ def get_historical_case(case_id: str):
         hits=case.hits,
         last_used=case.last_used.strftime("%Y-%m-%d") if case.last_used else "",
     )
+
+
+@router.post("/cases", response_model=HistoricalCaseResponse)
+def create_historical_case(request: HistoricalCaseCreateRequest):
+    if knowledge_repo.get_historical_case_by_id(request.case_id):
+        raise HTTPException(status_code=409, detail="Case already exists")
+
+    case = knowledge_repo.create_historical_case({
+        "case_id": request.case_id,
+        "title": request.title,
+        "symptoms": ",".join(request.symptoms),
+        "root_cause": request.root_cause,
+        "solution": request.solution,
+        "confidence": request.confidence,
+        "hits": 0,
+        "last_used": datetime.utcnow(),
+    })
+
+    return HistoricalCaseResponse(
+        id=case.case_id,
+        title=case.title,
+        symptoms=case.symptoms.split(","),
+        root_cause=case.root_cause,
+        solution=case.solution,
+        confidence=case.confidence,
+        hits=case.hits,
+        last_used=case.last_used.strftime("%Y-%m-%d") if case.last_used else "",
+    )
+
+
+@router.put("/cases/{case_id}", response_model=HistoricalCaseResponse)
+def update_historical_case(case_id: str, request: HistoricalCaseUpdateRequest):
+    case = knowledge_repo.get_historical_case_by_id(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    update_data = request.dict(exclude_unset=True)
+    if "symptoms" in update_data:
+        update_data["symptoms"] = ",".join(update_data["symptoms"])
+
+    updated_case = knowledge_repo.update_historical_case_by_case_id(case_id, update_data)
+    if not updated_case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    return HistoricalCaseResponse(
+        id=updated_case.case_id,
+        title=updated_case.title,
+        symptoms=updated_case.symptoms.split(","),
+        root_cause=updated_case.root_cause,
+        solution=updated_case.solution,
+        confidence=updated_case.confidence,
+        hits=updated_case.hits,
+        last_used=updated_case.last_used.strftime("%Y-%m-%d") if updated_case.last_used else "",
+    )
+
+
+@router.delete("/cases/{case_id}")
+def delete_historical_case(case_id: str):
+    deleted = knowledge_repo.delete_historical_case_by_case_id(case_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return {"status": "deleted", "case_id": case_id}

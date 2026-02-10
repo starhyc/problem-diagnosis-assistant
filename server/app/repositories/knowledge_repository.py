@@ -1,4 +1,5 @@
 from typing import Optional, List
+from datetime import datetime
 from sqlalchemy.orm import Session
 from app.models.case import KnowledgeNode, KnowledgeEdge, HistoricalCase
 from app.repositories.base import BaseRepository
@@ -111,6 +112,30 @@ class HistoricalCaseRepository(BaseRepository[HistoricalCase]):
             session.expunge(case)
         return cases
 
+    @with_session
+    def update_by_case_id(self, session: Session, case_id: str, **kwargs) -> Optional[HistoricalCase]:
+        case = session.query(HistoricalCase).filter(HistoricalCase.case_id == case_id).first()
+        if not case:
+            return None
+
+        for key, value in kwargs.items():
+            setattr(case, key, value)
+
+        case.last_used = datetime.utcnow()
+        session.flush()
+        session.expunge(case)
+        return case
+
+    @with_session
+    def delete_by_case_id(self, session: Session, case_id: str) -> bool:
+        case = session.query(HistoricalCase).filter(HistoricalCase.case_id == case_id).first()
+        if not case:
+            return False
+
+        session.delete(case)
+        session.flush()
+        return True
+
 
 class KnowledgeRepository:
     def __init__(self):
@@ -138,3 +163,12 @@ class KnowledgeRepository:
 
     def bulk_create_historical_cases(self, cases_data: List[dict]) -> List[HistoricalCase]:
         return self.cases.bulk_create(cases_data)
+
+    def create_historical_case(self, case_data: dict) -> HistoricalCase:
+        return self.cases.create(**case_data)
+
+    def update_historical_case_by_case_id(self, case_id: str, update_data: dict) -> Optional[HistoricalCase]:
+        return self.cases.update_by_case_id(case_id, **update_data)
+
+    def delete_historical_case_by_case_id(self, case_id: str) -> bool:
+        return self.cases.delete_by_case_id(case_id)
