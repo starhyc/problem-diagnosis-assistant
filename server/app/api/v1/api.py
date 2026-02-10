@@ -3,6 +3,7 @@ from app.api.v1.endpoints import (
     auth,
     dashboard,
     investigation,
+    history,
     knowledge,
     mcp_settings,
     settings,
@@ -14,6 +15,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["认证"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
 api_router.include_router(investigation.router, prefix="/investigation", tags=["Investigation"])
+api_router.include_router(history.router, prefix="/history", tags=["History"])
 api_router.include_router(knowledge.router, prefix="/knowledge", tags=["Knowledge"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
 api_router.include_router(mcp_settings.router, prefix="/settings", tags=["MCP Settings"])

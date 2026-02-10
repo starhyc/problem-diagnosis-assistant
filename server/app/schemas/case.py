@@ -120,6 +120,52 @@ class HistoricalCaseResponse(BaseModel):
     last_used: str
 
 
+class HistoricalCaseCreateRequest(BaseModel):
+    case_id: str
+    title: str
+    symptoms: List[str]
+    root_cause: str
+    solution: str
+    confidence: int = Field(ge=0, le=100)
+
+
+class HistoricalCaseUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    symptoms: Optional[List[str]] = None
+    root_cause: Optional[str] = None
+    solution: Optional[str] = None
+    confidence: Optional[int] = Field(default=None, ge=0, le=100)
+
+
+class HistoryListItemResponse(BaseModel):
+    session_id: str
+    snapshot_version: int
+    current_phase: str
+    confidence: int
+    message_count: int
+    event_count: int
+    service: Optional[str] = None
+    problem_type: Optional[str] = None
+    updated_at: datetime
+
+
+class HistoryEventResponse(BaseModel):
+    sequence: int
+    event_type: str
+    event_data: Dict[str, Any]
+    timestamp: datetime
+
+
+class HistoryDetailResponse(BaseModel):
+    session_id: str
+    snapshot_version: int
+    snapshot_data: Dict[str, Any]
+    event_count: int
+    first_event_at: Optional[datetime] = None
+    last_event_at: Optional[datetime] = None
+    events: List[HistoryEventResponse]
+
+
 class KnowledgeDataResponse(BaseModel):
     graph: KnowledgeGraphResponse
     historical_cases: List[HistoricalCaseResponse]

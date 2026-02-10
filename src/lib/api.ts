@@ -136,6 +136,44 @@ export interface KnowledgeData {
   historical_cases: HistoricalCase[];
 }
 
+export interface HistoryEvent {
+  sequence: number;
+  event_type: string;
+  event_data: Record<string, any>;
+  timestamp: string;
+}
+
+export interface HistorySession {
+  session_id: string;
+  snapshot_version: number;
+  current_phase: string;
+  confidence: number;
+  message_count: number;
+  event_count: number;
+  service?: string;
+  problem_type?: string;
+  updated_at: string;
+}
+
+export interface HistoryDetail {
+  session_id: string;
+  snapshot_version: number;
+  snapshot_data: Record<string, any>;
+  event_count: number;
+  first_event_at?: string;
+  last_event_at?: string;
+  events: HistoryEvent[];
+}
+
+export interface HistoricalCasePayload {
+  case_id: string;
+  title: string;
+  symptoms: string[];
+  root_cause: string;
+  solution: string;
+  confidence: number;
+}
+
 export interface Redline {
   id: string;
   name: string;
@@ -322,6 +360,35 @@ export const investigationApi = {
   },
 };
 
+export const historyApi = {
+  async getSessions(params?: {
+    start_time?: string;
+    end_time?: string;
+    service?: string;
+    problem_type?: string;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+  }): Promise<HistorySession[]> {
+    const query = new URLSearchParams();
+    if (params?.start_time) query.set('start_time', params.start_time);
+    if (params?.end_time) query.set('end_time', params.end_time);
+    if (params?.service) query.set('service', params.service);
+    if (params?.problem_type) query.set('problem_type', params.problem_type);
+    if (params?.sort_by) query.set('sort_by', params.sort_by);
+    if (params?.sort_order) query.set('sort_order', params.sort_order);
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return request<HistorySession[]>(`/history${suffix}`);
+  },
+
+  async getSessionDetail(sessionId: string): Promise<HistoryDetail> {
+    return request<HistoryDetail>(`/history/${sessionId}`);
+  },
+
+  async getSessionEvents(sessionId: string): Promise<HistoryEvent[]> {
+    return request<HistoryEvent[]>(`/history/${sessionId}/events`);
+  },
+};
+
 export const knowledgeApi = {
   async getKnowledgeData(): Promise<KnowledgeData> {
     return request<KnowledgeData>('/knowledge');
@@ -337,6 +404,26 @@ export const knowledgeApi = {
 
   async getHistoricalCase(caseId: string): Promise<HistoricalCase> {
     return request<HistoricalCase>(`/knowledge/cases/${caseId}`);
+  },
+
+  async createHistoricalCase(payload: HistoricalCasePayload): Promise<HistoricalCase> {
+    return request<HistoricalCase>('/knowledge/cases', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateHistoricalCase(caseId: string, payload: Partial<HistoricalCasePayload>): Promise<HistoricalCase> {
+    return request<HistoricalCase>(`/knowledge/cases/${caseId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteHistoricalCase(caseId: string): Promise<{ status: string; case_id: string }> {
+    return request<{ status: string; case_id: string }>(`/knowledge/cases/${caseId}`, {
+      method: 'DELETE',
+    });
   },
 };
 
