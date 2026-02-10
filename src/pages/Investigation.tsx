@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { PlayCircle, StopCircle, Bot } from 'lucide-react';
 import { useDiagnosisStore } from '../store/diagnosisStore';
 import { useAuthStore, hasPermission } from '../store/authStore';
-import { AgentType, AGENT_TYPES, ModelType, DiagnosisMode, DIAGNOSIS_MODES } from '../types/agent';
+import { AgentType, AGENT_TYPES, ModelType, DiagnosisMode, DIAGNOSIS_MODES, LEGACY_MODE_COMPAT_MAP } from '../types/agent';
 import {
   AgentTypeSelector,
   FileUploader,
@@ -224,6 +224,8 @@ function LeftPanel({
   onStartAnalysis: () => void;
   onStopAnalysis: () => void;
 }) {
+  const modeForDisplay = LEGACY_MODE_COMPAT_MAP[selectedMode] ?? selectedMode;
+
   return (
     <div style={{ width }} className="border-r border-border-subtle flex flex-col bg-bg-surface/50">
       <AgentTypeSelector
@@ -256,7 +258,7 @@ function LeftPanel({
         <div className="mt-3">
           <h3 className="text-sm font-semibold text-text-main mb-2">诊断模式</h3>
           <select
-            value={selectedMode}
+            value={modeForDisplay}
             onChange={(e) => onModeChange(e.target.value as DiagnosisMode)}
             disabled={isRunning}
             className="w-full bg-bg-input border border-border-subtle rounded-lg p-2 text-sm text-text-main focus:outline-none focus:border-primary disabled:opacity-50"
@@ -268,7 +270,7 @@ function LeftPanel({
             ))}
           </select>
           <p className="text-xs text-text-muted mt-2">
-            {selectedMode === 'auto' ? '自动推荐：系统按任务特征决策模式。' : `手动覆盖：已强制选择 ${DIAGNOSIS_MODES.find(m => m.id === selectedMode)?.name}。`}
+            {modeForDisplay === 'auto' ? '自动推荐：系统按任务特征决策模式。' : `手动覆盖：已强制选择 ${DIAGNOSIS_MODES.find(m => m.id === modeForDisplay)?.name}。`}
           </p>
         </div>
 

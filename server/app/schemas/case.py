@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
@@ -199,11 +199,25 @@ class SettingsDataResponse(BaseModel):
 
 class StartDiagnosisRequest(BaseModel):
     agent_type: str = "diagnosis"
-    mode: Literal["auto", "prd_minimal", "prd_standard", "prd_deep", "prd_swarm"] = "auto"
+    # 兼容说明：过渡期保留对 prd_* 旧值的解析，并映射到标准模式。
+    mode: Literal["auto", "direct", "plan_execute", "react", "hierarchical"] = "auto"
     problem_description: str
     description: Optional[str] = None
     files: Optional[Dict[str, List[str]]] = None
     context: Optional[Dict[str, Any]] = None
+
+    @validator("mode", pre=True)
+    def normalize_legacy_mode(cls, value: Optional[str]):
+        legacy_mapping = {
+            "prd_minimal": "direct",
+            "prd_standard": "plan_execute",
+            "prd_deep": "react",
+            "prd_swarm": "hierarchical",
+        }
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return legacy_mapping.get(normalized, normalized)
+        return value
 
 
 class DiagnosisActionResponse(BaseModel):

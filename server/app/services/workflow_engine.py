@@ -9,8 +9,7 @@ from app.services.agents.log_agent import LogAgent
 from app.services.agents.code_agent import CodeAgent
 from app.services.agents.knowledge_agent import KnowledgeAgent
 from app.services.agents.metric_agent import MetricAgent
-from app.services.mode_router import DiagnosisMode
-from app.services.executors import MinimalExecutor, StandardExecutor, DeepExecutor, SwarmExecutor
+from app.services.mode_router import DiagnosisMode, normalize_mode
 from app.core.logging_config import get_logger
 from app.core.event_publisher import event_publisher
 from app.core.database import get_db
@@ -49,10 +48,10 @@ class DiagnosisWorkflowEngine:
         self.active_workflows: Dict[str, Dict[str, Any]] = {}
         self.redis = redis_client.get_client()
         self.executors = {
-            DiagnosisMode.PRD_MINIMAL.value: MinimalExecutor(),
-            DiagnosisMode.PRD_STANDARD.value: StandardExecutor(),
-            DiagnosisMode.PRD_DEEP.value: DeepExecutor(),
-            DiagnosisMode.PRD_SWARM.value: SwarmExecutor(),
+            DiagnosisMode.DIRECT.value: self._run_direct,
+            DiagnosisMode.PLAN_EXECUTE.value: self._run_plan_execute,
+            DiagnosisMode.REACT.value: self._run_react,
+            DiagnosisMode.HIERARCHICAL.value: self._run_hierarchical,
         }
 
     def _confirmation_key(self, session_id: str, confirmation_id: str) -> str:
@@ -170,14 +169,16 @@ class DiagnosisWorkflowEngine:
         return False
 
     async def run(self, mode: str, state: DiagnosisState) -> DiagnosisState:
-        selected_mode = mode if mode in self.executors else DiagnosisMode.PRD_STANDARD.value
+        selected_mode = normalize_mode(mode) or DiagnosisMode.PLAN_EXECUTE.value
+        if selected_mode not in self.executors:
+            selected_mode = DiagnosisMode.PLAN_EXECUTE.value
         state.setdefault("mode_history", [])
         state["mode"] = selected_mode
         state.setdefault("trace_root_id", str(uuid.uuid4()))
 
         try:
             executor = self.executors[selected_mode]
-            return await executor.run(self, state)
+            return await executor(state)
         except Exception as exc:
             logger.warning(f"Mode execution failed in {selected_mode}: {exc}")
             fallback_mode = self._fallback_mode(selected_mode)
@@ -203,14 +204,14 @@ class DiagnosisWorkflowEngine:
                 },
             )
             state["mode"] = fallback_mode
-            return await self.executors[fallback_mode].run(self, state)
+            return await self.executors[fallback_mode](state)
 
     def switch_mode(self, session_id: str, mode: str, reason: str) -> bool:
         if session_id not in self.active_workflows or mode not in self.executors:
             return False
 
         workflow_state = self.active_workflows[session_id]
-        current_mode = workflow_state.get("mode", DiagnosisMode.PRD_STANDARD.value)
+        current_mode = workflow_state.get("mode", DiagnosisMode.PLAN_EXECUTE.value)
         if current_mode == mode:
             return True
 
@@ -220,19 +221,163 @@ class DiagnosisWorkflowEngine:
         workflow_state["mode"] = mode
         return True
 
-    async def _run_minimal(self, state: DiagnosisState) -> DiagnosisState:
-        return await self._coordinator_only(state)
+    async def _run_direct(self, state: DiagnosisState) -> DiagnosisState:
+        state["current_phase"] = "direct"
+        state = await self._coordinator_only(state)
+        state["current_phase"] = "completed"
+        return state
 
-    async def _run_standard(self, state: DiagnosisState) -> DiagnosisState:
-        return await self._coordinator_only(state)
+    async def _run_plan_execute(self, state: DiagnosisState) -> DiagnosisState:
+        if state.get("cancelled"):
+            return state
 
-    async def _run_deep(self, state: DiagnosisState) -> DiagnosisState:
-        workflow = self.create_complex_workflow(include_code=False)
-        return await workflow.ainvoke(state)
+        state["current_phase"] = "plan"
+        planner_result = await self.coordinator.execute_with_timeout(
+            "Create a diagnosis execution plan",
+            {
+                "symptom": state["symptom"],
+                "goal": "产出最小可用执行计划",
+                **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "Create diagnosis plan", "plan"),
+            },
+            mode=state.get("mode"),
+        )
+        state["messages"].append(planner_result)
 
-    async def _run_swarm(self, state: DiagnosisState) -> DiagnosisState:
-        workflow = self.create_complex_workflow(include_code=True)
-        return await workflow.ainvoke(state)
+        state["current_phase"] = "execute"
+        state = await self._parallel_analysis(state)
+        state = await self._coordinator_synthesis(state)
+        state = await self._final_decision(state)
+        return state
+
+    async def _run_react(self, state: DiagnosisState) -> DiagnosisState:
+        max_iterations = 4
+        stagnation_limit = 2
+        no_increment_rounds = 0
+        previous_score = -1
+
+        for idx in range(max_iterations):
+            if state.get("cancelled"):
+                return state
+
+            state["current_phase"] = f"react_{idx + 1}_reason"
+            reasoning = await self.coordinator.execute_with_timeout(
+                f"ReAct reasoning iteration {idx + 1}",
+                {
+                    "symptom": state["symptom"],
+                    "current_confidence": state.get("confidence", 0),
+                    "iteration": idx + 1,
+                    **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "ReAct reasoning", "reason"),
+                },
+                mode=state.get("mode"),
+            )
+            state["messages"].append(reasoning)
+
+            state["current_phase"] = f"react_{idx + 1}_act"
+            state = await self._parallel_analysis(state)
+            state = await self._coordinator_synthesis(state)
+
+            progress_score = len(state.get("evidence", [])) + state.get("confidence", 0)
+            if progress_score <= previous_score:
+                no_increment_rounds += 1
+            else:
+                no_increment_rounds = 0
+            previous_score = progress_score
+
+            if no_increment_rounds >= stagnation_limit:
+                state.setdefault("mode_history", []).append(
+                    {
+                        "from": DiagnosisMode.REACT.value,
+                        "to": DiagnosisMode.PLAN_EXECUTE.value,
+                        "reason": "react_stagnation",
+                        "type": "runtime_degrade",
+                    }
+                )
+                state["mode"] = DiagnosisMode.PLAN_EXECUTE.value
+                return await self._run_plan_execute(state)
+
+            if state.get("confidence", 0) >= 80:
+                break
+
+        state = await self._final_decision(state)
+        return state
+
+    async def _run_hierarchical(self, state: DiagnosisState) -> DiagnosisState:
+        if state.get("cancelled"):
+            return state
+
+        state["current_phase"] = "orchestrate"
+        orchestrator_result = await self.coordinator.execute_with_timeout(
+            "Delegate specialist tasks for diagnosis",
+            {
+                "symptom": state["symptom"],
+                "specialists": ["log", "metric", "code", "knowledge"],
+                **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "Delegate specialists", "orchestrate"),
+            },
+            mode=state.get("mode"),
+        )
+        state["messages"].append(orchestrator_result)
+
+        state["current_phase"] = "specialist_execute"
+        log_task = self.log_agent.execute_with_timeout(
+            "Analyze logs",
+            {
+                "symptom": state["symptom"],
+                **self._trace_context(state, "Log Analysis Agent", state.get("trace_root_id"), "Analyze logs", "specialist"),
+            },
+            mode=state.get("mode"),
+        )
+        metric_task = self.metric_agent.execute_with_timeout(
+            "Analyze system metrics",
+            {
+                "symptom": state["symptom"],
+                **self._trace_context(state, "Metric Analysis Agent", state.get("trace_root_id"), "Analyze system metrics", "specialist"),
+            },
+            mode=state.get("mode"),
+        )
+        code_task = self.code_agent.execute_with_timeout(
+            "Analyze code and configuration",
+            {
+                "symptom": state["symptom"],
+                **self._trace_context(state, "Code Analysis Agent", state.get("trace_root_id"), "Analyze code and configuration", "specialist"),
+            },
+            mode=state.get("mode"),
+        )
+        knowledge_task = self.knowledge_agent.execute_with_timeout(
+            "Find similar cases",
+            {
+                "symptom": state["symptom"],
+                **self._trace_context(state, "Knowledge Agent", state.get("trace_root_id"), "Find similar cases", "specialist"),
+            },
+            mode=state.get("mode"),
+        )
+
+        log_result, metric_result, code_result, knowledge_result = await asyncio.gather(
+            log_task, metric_task, code_task, knowledge_task
+        )
+        specialist_outputs = [log_result, metric_result, code_result, knowledge_result]
+        state["messages"].extend(specialist_outputs)
+        state["evidence"].extend(
+            [
+                {"type": "log", "data": log_result},
+                {"type": "metric", "data": metric_result},
+                {"type": "code", "data": code_result},
+                {"type": "knowledge", "data": knowledge_result},
+            ]
+        )
+
+        state["current_phase"] = "aggregate"
+        aggregate_result = await self.coordinator.execute_with_timeout(
+            "Aggregate specialist outputs into final diagnosis",
+            {
+                "specialist_outputs": specialist_outputs,
+                **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "Aggregate specialists", "aggregate"),
+            },
+            mode=state.get("mode"),
+        )
+        state["messages"].append(aggregate_result)
+        state["confidence"] = max(state.get("confidence", 0), 85)
+        state = await self._final_decision(state)
+        return state
 
     async def _coordinator_only(self, state: DiagnosisState) -> DiagnosisState:
         if state.get("cancelled"):
@@ -448,11 +593,13 @@ class DiagnosisWorkflowEngine:
         return "yes" if state["confidence"] < 80 else "no"
 
     def _fallback_mode(self, mode: str) -> str:
-        if mode == DiagnosisMode.PRD_SWARM.value:
-            return DiagnosisMode.PRD_DEEP.value
-        if mode == DiagnosisMode.PRD_DEEP.value:
-            return DiagnosisMode.PRD_STANDARD.value
-        return DiagnosisMode.PRD_STANDARD.value
+        if mode == DiagnosisMode.HIERARCHICAL.value:
+            return DiagnosisMode.REACT.value
+        if mode == DiagnosisMode.REACT.value:
+            return DiagnosisMode.PLAN_EXECUTE.value
+        if mode == DiagnosisMode.PLAN_EXECUTE.value:
+            return DiagnosisMode.DIRECT.value
+        return DiagnosisMode.DIRECT.value
 
 
 workflow_engine = DiagnosisWorkflowEngine()

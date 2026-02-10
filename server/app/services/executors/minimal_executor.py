@@ -2,7 +2,7 @@ from app.services.executors.base_executor import BaseWorkflowExecutor, Diagnosis
 
 
 class MinimalExecutor(BaseWorkflowExecutor):
-    mode = "prd_minimal"
+    mode = "direct"
 
     async def run(self, engine, state: DiagnosisState) -> DiagnosisState:
-        return await engine._run_minimal(state)
+        return await engine._run_direct(state)

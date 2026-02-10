@@ -2,7 +2,7 @@ from app.services.executors.base_executor import BaseWorkflowExecutor, Diagnosis
 
 
 class StandardExecutor(BaseWorkflowExecutor):
-    mode = "prd_standard"
+    mode = "plan_execute"
 
     async def run(self, engine, state: DiagnosisState) -> DiagnosisState:
-        return await engine._run_standard(state)
+        return await engine._run_plan_execute(state)
