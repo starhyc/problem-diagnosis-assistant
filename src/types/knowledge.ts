@@ -26,6 +26,7 @@ export interface HistoricalCase {
   confidence: number;
   hits: number;
   last_used: string;
+  evidence?: string[];
 }
 
 export interface KnowledgeData {

@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Investigation from './pages/Investigation';
 import Knowledge from './pages/Knowledge';
+import KnowledgeCaseDetail from './pages/KnowledgeCaseDetail';
 import History from './pages/History';
 import HistoryReplay from './pages/HistoryReplay';
 import Settings from './pages/Settings';
@@ -51,6 +52,7 @@ function App() {
                   <Route path="/investigation" element={<Investigation />} />
                   <Route path="/investigation/:id" element={<Investigation />} />
                   <Route path="/knowledge" element={<Knowledge />} />
+                  <Route path="/knowledge/cases/:id" element={<KnowledgeCaseDetail />} />
                   <Route path="/history" element={<History />} />
                   <Route path="/history/:sessionId" element={<HistoryReplay />} />
                   <Route path="/settings" element={<Settings />} />
