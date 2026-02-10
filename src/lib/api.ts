@@ -129,6 +129,7 @@ export interface HistoricalCase {
   confidence: number;
   hits: number;
   last_used: string;
+  evidence?: string[];
 }
 
 export interface KnowledgeData {
@@ -402,8 +403,12 @@ export const knowledgeApi = {
     return request<HistoricalCase[]>('/knowledge/cases');
   },
 
-  async getHistoricalCase(caseId: string): Promise<HistoricalCase> {
+  async getCaseById(caseId: string): Promise<HistoricalCase> {
     return request<HistoricalCase>(`/knowledge/cases/${caseId}`);
+  },
+
+  async getHistoricalCase(caseId: string): Promise<HistoricalCase> {
+    return this.getCaseById(caseId);
   },
 
   async createHistoricalCase(payload: HistoricalCasePayload): Promise<HistoricalCase> {
