@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
 
 export interface LoginRequest {
   username: string;
@@ -215,6 +215,22 @@ export interface AutomationPolicy {
   risk_thresholds: Record<'R0' | 'R1' | 'R2' | 'R3', number>;
 }
 
+
+export interface StopDiagnosisRequest {
+  session_id: string;
+}
+
+export interface ActionApprovalRequest {
+  session_id: string;
+  action_id: string;
+}
+
+export interface ActionRejectRequest {
+  session_id: string;
+  action_id: string;
+  reason?: string;
+}
+
 export interface SkillPackage {
   id: string;
   name: string;
@@ -344,9 +360,10 @@ export const investigationApi = {
     });
   },
 
-  async stopDiagnosis(): Promise<any> {
+  async stopDiagnosis(payload: StopDiagnosisRequest): Promise<any> {
     return request('/investigation/stop', {
       method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 
@@ -354,15 +371,17 @@ export const investigationApi = {
     return request('/investigation/action');
   },
 
-  async approveAction(): Promise<any> {
+  async approveAction(payload: ActionApprovalRequest): Promise<any> {
     return request('/investigation/action/approve', {
       method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 
-  async rejectAction(): Promise<any> {
+  async rejectAction(payload: ActionRejectRequest): Promise<any> {
     return request('/investigation/action/reject', {
       method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 };

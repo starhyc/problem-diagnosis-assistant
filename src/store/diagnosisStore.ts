@@ -23,6 +23,8 @@ export interface TimelineStep {
 
 export interface DiagnosisCase {
   id: string;
+  sessionId?: string;
+  taskId?: string;
   symptom: string;
   description: string;
   status: 'pending' | 'investigating' | 'resolved' | 'failed';
@@ -46,7 +48,7 @@ type TraceLifecycleState = 'idle' | 'started' | 'completed';
 interface DiagnosisState {
   currentCase: DiagnosisCase | null;
   isRunning: boolean;
-  proposedAction: { title: string; confidence: number } | null;
+  proposedAction: { id: string; title: string; confidence: number } | null;
   wsConnected: boolean;
   pendingConfirmation: ConfirmationRequired | null;
   confirmationFlowState: ConfirmationFlowState;
@@ -58,10 +60,10 @@ interface DiagnosisState {
   rootAgentIds: string[];
   replaySnapshot: TraceReplaySnapshot | null;
 
-  startDiagnosis: (agentType: string, symptom: string, description: string, mode?: DiagnosisMode) => void;
-  stopDiagnosis: () => void;
-  approveAction: () => void;
-  rejectAction: () => void;
+  startDiagnosis: (agentType: string, symptom: string, description: string, mode?: DiagnosisMode) => Promise<void>;
+  stopDiagnosis: () => Promise<void>;
+  approveAction: () => Promise<void>;
+  rejectAction: () => Promise<void>;
   respondToConfirmation: (confirmationId: string, response: any) => void;
   initializeWebSocket: () => void;
   disconnectWebSocket: () => void;
@@ -118,7 +120,7 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
         }
         case 'action_proposal': {
           const proposal = message.data;
-          set({ proposedAction: { title: proposal.title, confidence: proposal.confidence } });
+          set({ proposedAction: { id: proposal.id || 'current-action', title: proposal.title, confidence: proposal.confidence } });
           break;
         }
         case 'diagnosis_status': {
@@ -329,12 +331,14 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
 
   startDiagnosis: async (agentType: string, symptom: string, description: string, mode: DiagnosisMode = 'auto') => {
     try {
-      await investigationApi.startDiagnosis(agentType, symptom, description, undefined, undefined, mode);
-      const caseId = `CASE-${agentType.toUpperCase()}-${Date.now()}`;
+      const response = await investigationApi.startDiagnosis(agentType, symptom, description, undefined, undefined, mode);
+      const caseId = response.session_id || `CASE-${agentType.toUpperCase()}-${Date.now()}`;
 
       set({
         currentCase: {
           id: caseId,
+          sessionId: response.session_id,
+          taskId: response.task_id,
           symptom,
           description,
           status: 'investigating',
@@ -363,25 +367,50 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
     }
   },
 
-  stopDiagnosis: () => {
+  stopDiagnosis: async () => {
+    const sessionId = get().currentCase?.sessionId;
+    if (sessionId) {
+      try {
+        await investigationApi.stopDiagnosis({ session_id: sessionId });
+      } catch (error) {
+        console.error('[DiagnosisStore] Failed to stop diagnosis session:', error);
+      }
+    }
     wsService.stopDiagnosis('User stopped');
     set({ isRunning: false });
   },
 
-  approveAction: () => {
+  approveAction: async () => {
     const state = get();
-    if (!state.proposedAction) return;
-    wsService.approveAction('current-action');
+    if (!state.proposedAction || !state.currentCase?.sessionId) return;
+    try {
+      await investigationApi.approveAction({
+        session_id: state.currentCase.sessionId,
+        action_id: state.proposedAction.id,
+      });
+    } catch (error) {
+      console.error('[DiagnosisStore] Failed to approve action:', error);
+    }
+    wsService.approveAction(state.proposedAction.id);
     set((s) => ({
       proposedAction: null,
       currentCase: s.currentCase ? { ...s.currentCase, status: 'resolved' } : null,
     }));
   },
 
-  rejectAction: () => {
+  rejectAction: async () => {
     const state = get();
-    if (!state.proposedAction) return;
-    wsService.rejectAction('current-action', 'User rejected');
+    if (!state.proposedAction || !state.currentCase?.sessionId) return;
+    try {
+      await investigationApi.rejectAction({
+        session_id: state.currentCase.sessionId,
+        action_id: state.proposedAction.id,
+        reason: 'User rejected',
+      });
+    } catch (error) {
+      console.error('[DiagnosisStore] Failed to reject action:', error);
+    }
+    wsService.rejectAction(state.proposedAction.id, 'User rejected');
     set({ proposedAction: null });
   },
 

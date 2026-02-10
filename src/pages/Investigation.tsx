@@ -56,13 +56,13 @@ export default function Investigation() {
     };
   }, []);
 
-  const handleStartAnalysis = () => {
+  const handleStartAnalysis = async () => {
     if (!problemDescription.trim()) return;
-    startDiagnosis(selectedAgentType, problemDescription, '', selectedMode);
+    await startDiagnosis(selectedAgentType, problemDescription, '', selectedMode);
   };
 
-  const handleStopAnalysis = () => {
-    stopDiagnosis();
+  const handleStopAnalysis = async () => {
+    await stopDiagnosis();
   };
 
   const canApprove = hasPermission(user, 'engineer');
