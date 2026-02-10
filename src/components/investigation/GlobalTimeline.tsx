@@ -8,21 +8,44 @@ interface GlobalTimelineProps {
 interface EnrichedStep extends ExecutionStep {
   agentId: string;
   agentName: string;
+  parentId: string | null;
 }
 
 export default function GlobalTimeline({ traces }: GlobalTimelineProps) {
-  const allSteps = useMemo(() => {
+  const { allSteps, phaseStats, modelStats, totalCost } = useMemo(() => {
     const steps: EnrichedStep[] = [];
+    const phaseMap = new Map<string, number>();
+    const modelMap = new Map<string, { count: number; cost: number }>();
+    let cost = 0;
+
     traces.forEach((trace) => {
+      const phase = inferPhase(trace);
+      phaseMap.set(phase, (phaseMap.get(phase) || 0) + (trace.duration || trace.latency || 0));
+      cost += trace.costEstimate || 0;
+
+      if (trace.model) {
+        modelMap.set(trace.model, {
+          count: (modelMap.get(trace.model)?.count || 0) + 1,
+          cost: (modelMap.get(trace.model)?.cost || 0) + (trace.costEstimate || 0),
+        });
+      }
+
       trace.steps.forEach((step) => {
         steps.push({
           ...step,
           agentId: trace.id,
           agentName: trace.name,
+          parentId: trace.parentId,
         });
       });
     });
-    return steps.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    return {
+      allSteps: steps.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+      phaseStats: Array.from(phaseMap.entries()),
+      modelStats: Array.from(modelMap.entries()),
+      totalCost: cost,
+    };
   }, [traces]);
 
   if (allSteps.length === 0) {
@@ -35,6 +58,12 @@ export default function GlobalTimeline({ traces }: GlobalTimelineProps) {
 
   return (
     <div className="p-4 space-y-3 overflow-auto">
+      <div className="bg-bg-surface rounded p-3 border border-border-subtle text-xs">
+        <div className="text-text-main font-semibold mb-2">阶段耗时 / 模型成本</div>
+        <div className="text-text-muted">阶段: {phaseStats.map(([phase, ms]) => `${phase} ${formatDuration(ms)}`).join(' · ')}</div>
+        <div className="text-text-muted mt-1">模型: {modelStats.map(([model, s]) => `${model}(${s.count}) $${s.cost.toFixed(4)}`).join(' · ')}</div>
+        <div className="text-text-muted mt-1">总费用: ${totalCost.toFixed(4)}</div>
+      </div>
       {allSteps.map((step) => (
         <StepItem key={`${step.agentId}-${step.id}`} step={step} />
       ))}
@@ -43,56 +72,33 @@ export default function GlobalTimeline({ traces }: GlobalTimelineProps) {
 }
 
 function StepItem({ step }: { step: EnrichedStep }) {
+  const depthClass = step.parentId ? 'ml-6' : '';
   return (
-    <div className={`border-l-4 rounded-r p-3 bg-bg-surface ${getStepBorderColor(step.type)}`}>
+    <div className={`${depthClass} border-l-4 rounded-r p-3 bg-bg-surface ${getStepBorderColor(step.type)}`}>
       <div className="flex items-start gap-2">
         <div className={`w-2 h-2 rounded-full mt-1.5 ${getStepColor(step.type)}`} />
         <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="text-xs text-text-muted">{formatTimestamp(step.timestamp)}</span>
             <span className="text-xs font-mono text-text-muted">{step.agentName}</span>
             <span className="text-sm font-medium text-text-main">{getStepLabel(step)}</span>
-            {step.duration !== undefined && (
-              <span className="text-xs text-text-muted">⏱️ {formatDuration(step.duration)}</span>
-            )}
+            {step.model && <span className="text-xs text-text-muted">{step.model}</span>}
+            {step.costEstimate !== undefined && <span className="text-xs text-text-muted">${step.costEstimate.toFixed(4)}</span>}
+            {step.duration !== undefined && <span className="text-xs text-text-muted">⏱️ {formatDuration(step.duration)}</span>}
           </div>
-
-          {step.type === 'task_received' && step.input && (
-            <div className="text-sm text-text-main mt-2">
-              <span className="text-text-muted">输入: </span>
-              {step.input}
-            </div>
-          )}
-
-          {step.type === 'llm_thinking' && step.content && (
-            <div className="text-sm text-text-main mt-2 whitespace-pre-wrap">{step.content}</div>
-          )}
-
-          {step.type === 'tool_call' && (
-            <div className="text-sm text-text-main mt-2">
-              <span className="text-text-muted">工具: </span>
-              <span className="font-mono">{step.toolName}</span>
-              {step.status && (
-                <span className={`ml-2 text-xs ${step.status === 'success' ? 'text-semantic-success' : 'text-semantic-danger'}`}>
-                  {step.status === 'success' ? '✅ 成功' : '❌ 失败'}
-                </span>
-              )}
-            </div>
-          )}
-
-          {step.type === 'agent_dispatch' && (
-            <div className="text-sm text-text-main mt-2">
-              <span className="text-text-muted">目标: </span>
-              {step.targetAgentName || step.targetAgentId}
-              {step.taskDescription && (
-                <span className="text-text-muted ml-2">任务: {step.taskDescription}</span>
-              )}
-            </div>
-          )}
+          {step.content && <div className="text-sm text-text-main mt-1 whitespace-pre-wrap">{step.content}</div>}
+          {step.toolCall && <div className="text-xs text-text-muted mt-1">toolCall: {step.toolCall}</div>}
         </div>
       </div>
     </div>
   );
+}
+
+function inferPhase(trace: AgentTrace): string {
+  if (trace.taskDescription?.includes('final')) return 'finalize';
+  if (trace.taskDescription?.includes('Synthesize')) return 'synthesis';
+  if (trace.taskDescription?.includes('Find similar')) return 'knowledge';
+  return 'analysis';
 }
 
 function getStepLabel(step: ExecutionStep): string {

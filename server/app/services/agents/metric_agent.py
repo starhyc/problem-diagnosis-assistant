@@ -18,12 +18,12 @@ Context: {context}
 
 Provide your metric analysis findings."""
 
+
 class MetricAgent(BaseAgent):
     def __init__(self):
         super().__init__("metric", "Metric Analysis Agent")
 
     async def execute(self, task: str, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute metric analysis task"""
         if not self.llm:
             self.initialize()
 
@@ -31,16 +31,23 @@ class MetricAgent(BaseAgent):
             prompt = ChatPromptTemplate.from_template(METRIC_AGENT_PROMPT)
             messages = prompt.format_messages(task=task, context=str(context))
             response = await self.llm.ainvoke(messages)
-
+            usage = self._extract_usage(response)
             return {
                 "agent": self.agent_name,
                 "result": response.content,
-                "status": "success"
+                "status": "success",
+                "model": self._extract_model_name(),
+                **usage,
+                "costEstimate": self._estimate_cost(usage["inputTokens"], usage["outputTokens"]),
             }
         except Exception as e:
             logger.error(f"MetricAgent execution failed: {e}")
             return {
                 "agent": self.agent_name,
                 "result": str(e),
-                "status": "error"
+                "status": "error",
+                "model": self._extract_model_name(),
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "costEstimate": 0,
             }

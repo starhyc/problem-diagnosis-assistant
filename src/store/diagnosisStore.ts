@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { investigationApi } from '../lib/api';
 import { wsService, WSMessage, ConfirmationRequired } from '../lib/websocket';
-import { AgentTrace } from '../types/trace';
+import { AgentTrace, ExecutionStep, TraceReplaySnapshot } from '../types/trace';
 import { DiagnosisMode } from '../types/agent';
 
 export interface AgentMessage {
@@ -41,6 +41,8 @@ export type ConfirmationFlowState =
   | 'rejected'
   | 'timeout';
 
+type TraceLifecycleState = 'idle' | 'started' | 'completed';
+
 interface DiagnosisState {
   currentCase: DiagnosisCase | null;
   isRunning: boolean;
@@ -50,10 +52,11 @@ interface DiagnosisState {
   confirmationFlowState: ConfirmationFlowState;
   currentAgentType: string;
 
-  // Trace state
   traces: Map<string, AgentTrace>;
+  traceLifecycle: Map<string, TraceLifecycleState>;
   selectedAgentId: string | null;
   rootAgentIds: string[];
+  replaySnapshot: TraceReplaySnapshot | null;
 
   startDiagnosis: (agentType: string, symptom: string, description: string, mode?: DiagnosisMode) => void;
   stopDiagnosis: () => void;
@@ -68,6 +71,14 @@ interface DiagnosisState {
 let wsUnsubscribe: (() => void) | null = null;
 let statusUnsubscribe: (() => void) | null = null;
 
+const mapStepType = (stepData: any): ExecutionStep['type'] => {
+  const rawType = stepData.type || stepData.stepType || 'llm_thinking';
+  if (rawType === 'task_received' || rawType === 'llm_thinking' || rawType === 'tool_call' || rawType === 'agent_dispatch') {
+    return rawType;
+  }
+  return 'llm_thinking';
+};
+
 export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
   currentCase: null,
   isRunning: false,
@@ -77,15 +88,15 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
   confirmationFlowState: 'idle',
   currentAgentType: 'diagnosis',
   traces: new Map(),
+  traceLifecycle: new Map(),
   selectedAgentId: null,
   rootAgentIds: [],
+  replaySnapshot: null,
 
   initializeWebSocket: () => {
     if (wsUnsubscribe) return;
 
-    wsService.connect().then(() => {
-      console.log('[DiagnosisStore] WebSocket connected');
-    }).catch((error) => {
+    wsService.connect().catch((error) => {
       console.error('[DiagnosisStore] WebSocket connection failed:', error);
     });
 
@@ -105,58 +116,38 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
           }));
           break;
         }
-
         case 'action_proposal': {
           const proposal = message.data;
-          set({
-            proposedAction: {
-              title: proposal.title,
-              confidence: proposal.confidence,
-            },
-          });
+          set({ proposedAction: { title: proposal.title, confidence: proposal.confidence } });
           break;
         }
-
         case 'diagnosis_status': {
-          const status = message.data;
+          const statusData = message.data;
           set({
-            isRunning: status.status === 'running',
+            isRunning: statusData.status === 'running',
             currentCase: state.currentCase
               ? {
                   ...state.currentCase,
-                  status: status.status as any,
+                  status: statusData.status as any,
                 }
               : null,
           });
           break;
         }
-
         case 'timeline_update': {
           const timelineData = message.data;
           set((s) => ({
-            currentCase: s.currentCase
-              ? {
-                  ...s.currentCase,
-                  timeline: timelineData.timeline,
-                }
-              : null,
+            currentCase: s.currentCase ? { ...s.currentCase, timeline: timelineData.timeline } : null,
           }));
           break;
         }
-
         case 'confidence_update': {
           const confidenceData = message.data;
           set((s) => ({
-            currentCase: s.currentCase
-              ? {
-                  ...s.currentCase,
-                  confidence: confidenceData.confidence,
-                }
-              : null,
+            currentCase: s.currentCase ? { ...s.currentCase, confidence: confidenceData.confidence } : null,
           }));
           break;
         }
-
         case 'confirmation_required': {
           const confirmation = message.data as ConfirmationRequired;
           const risk = confirmation.riskLevel;
@@ -166,7 +157,6 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
           });
           break;
         }
-
         case 'confirmation_status': {
           const confirmationStatus = message.data;
           const action = confirmationStatus.action;
@@ -176,108 +166,145 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
             set({ pendingConfirmation: null, confirmationFlowState: 'timeout', isRunning: false });
             break;
           }
-
           if (action === 'second_confirm') {
             set((s) => ({
               confirmationFlowState: 'pending_r3',
               pendingConfirmation: s.pendingConfirmation
-                ? {
-                    ...s.pendingConfirmation,
-                    riskLevel: 'R3',
-                    message: `R3 二次确认：${s.pendingConfirmation.message}`,
-                  }
+                ? { ...s.pendingConfirmation, riskLevel: 'R3', message: `R3 二次确认：${s.pendingConfirmation.message}` }
                 : s.pendingConfirmation,
             }));
             break;
           }
-
           if (statusValue === 'rejected' || action === 'reject' || action === 'cancel') {
             set({ pendingConfirmation: null, confirmationFlowState: 'rejected', isRunning: false });
             break;
           }
-
           set({ pendingConfirmation: null, confirmationFlowState: 'approved' });
           break;
         }
-
-        case 'error': {
-          console.error('[DiagnosisStore] Error from server:', message.data);
-          set({ isRunning: false });
-          break;
-        }
-
         case 'agent_trace_start': {
           const traceData = message.data;
-          const newTrace: AgentTrace = {
-            id: traceData.agentId,
-            name: traceData.agentName,
-            parentId: traceData.parentId || null,
-            status: 'running',
-            startTime: traceData.startTime,
-            totalTokens: { input: 0, output: 0 },
-            steps: [],
-          };
+          const agentId = traceData.agentId;
 
           set((s) => {
-            const newTraces = new Map(s.traces);
-            newTraces.set(traceData.agentId, newTrace);
+            const lifecycle = new Map(s.traceLifecycle);
+            if (lifecycle.get(agentId) === 'started') {
+              console.warn(`[DiagnosisStore] duplicate trace start ignored: ${agentId}`);
+              return s;
+            }
 
-            const newRootIds = traceData.parentId
+            lifecycle.set(agentId, 'started');
+            const traces = new Map(s.traces);
+            traces.set(agentId, {
+              id: agentId,
+              name: traceData.agentName || 'Unknown Agent',
+              parentId: traceData.parentId || null,
+              status: 'running',
+              startTime: traceData.startTime || new Date().toISOString(),
+              totalTokens: {
+                input: traceData.inputTokens || 0,
+                output: traceData.outputTokens || 0,
+              },
+              model: traceData.model,
+              costEstimate: traceData.costEstimate || 0,
+              steps: [],
+              taskDescription: traceData.taskDescription,
+            });
+
+            const rootAgentIds = traceData.parentId
               ? s.rootAgentIds
-              : [...s.rootAgentIds, traceData.agentId];
+              : s.rootAgentIds.includes(agentId)
+              ? s.rootAgentIds
+              : [...s.rootAgentIds, agentId];
 
             return {
-              traces: newTraces,
-              rootAgentIds: newRootIds,
-              selectedAgentId: s.selectedAgentId || traceData.agentId,
+              traces,
+              traceLifecycle: lifecycle,
+              rootAgentIds,
+              selectedAgentId: s.selectedAgentId || agentId,
             };
           });
           break;
         }
-
         case 'agent_trace_step': {
           const stepData = message.data;
-          const mappedStep = {
-            ...stepData,
-            id: stepData.id || stepData.stepId,
-            type: stepData.type || stepData.stepType,
-          };
-          delete mappedStep.stepId;
-          delete mappedStep.stepType;
-
+          const agentId = stepData.agentId;
           set((s) => {
-            const trace = s.traces.get(stepData.agentId);
+            if (s.traceLifecycle.get(agentId) !== 'started') {
+              console.warn(`[DiagnosisStore] trace step before start ignored: ${agentId}`);
+              return s;
+            }
+            const trace = s.traces.get(agentId);
             if (!trace) return s;
 
-            const newTraces = new Map(s.traces);
-            newTraces.set(stepData.agentId, {
+            const mappedStep: ExecutionStep = {
+              ...stepData,
+              id: stepData.id || stepData.stepId,
+              type: mapStepType(stepData),
+              timestamp: stepData.timestamp || new Date().toISOString(),
+            };
+
+            const traces = new Map(s.traces);
+            traces.set(agentId, {
               ...trace,
+              model: trace.model || stepData.model,
+              costEstimate: (trace.costEstimate || 0) + (stepData.costEstimate || 0),
               steps: [...trace.steps, mappedStep],
             });
-
-            return { traces: newTraces };
+            return { traces };
           });
           break;
         }
-
         case 'agent_trace_complete': {
           const completeData = message.data;
+          const agentId = completeData.agentId;
+
           set((s) => {
-            const trace = s.traces.get(completeData.agentId);
+            if (s.traceLifecycle.get(agentId) !== 'started') {
+              console.warn(`[DiagnosisStore] trace complete before start ignored: ${agentId}`);
+              return s;
+            }
+            const trace = s.traces.get(agentId);
             if (!trace) return s;
 
-            const newTraces = new Map(s.traces);
-            newTraces.set(completeData.agentId, {
+            const lifecycle = new Map(s.traceLifecycle);
+            lifecycle.set(agentId, 'completed');
+
+            const traces = new Map(s.traces);
+            traces.set(agentId, {
               ...trace,
-              status: completeData.status,
-              endTime: completeData.endTime,
-              duration: completeData.duration,
-              totalTokens: completeData.totalTokens,
+              status: completeData.status || 'success',
+              endTime: completeData.endTime || new Date().toISOString(),
+              duration: completeData.duration ?? completeData.latency,
+              latency: completeData.latency,
+              totalTokens: completeData.totalTokens || {
+                input: completeData.inputTokens ?? trace.totalTokens.input,
+                output: completeData.outputTokens ?? trace.totalTokens.output,
+              },
+              model: completeData.model || trace.model,
+              costEstimate: completeData.costEstimate ?? trace.costEstimate,
               error: completeData.error,
             });
 
-            return { traces: newTraces };
+            return { traces, traceLifecycle: lifecycle };
           });
+          break;
+        }
+        default: {
+          if (message.type === 'diagnosis_completed') {
+            const s = get();
+            const replaySnapshot: TraceReplaySnapshot = {
+              snapshotAt: message.timestamp || new Date().toISOString(),
+              caseId: s.currentCase?.id,
+              traces: Array.from(s.traces.values()),
+              rootAgentIds: [...s.rootAgentIds],
+            };
+            set({ replaySnapshot, isRunning: false });
+          }
+          if (message.type === 'error') {
+            console.error('[DiagnosisStore] Error from server:', message.data);
+            set({ isRunning: false });
+          }
           break;
         }
       }
@@ -303,29 +330,28 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
   startDiagnosis: async (agentType: string, symptom: string, description: string, mode: DiagnosisMode = 'auto') => {
     try {
       await investigationApi.startDiagnosis(agentType, symptom, description, undefined, undefined, mode);
-
       const caseId = `CASE-${agentType.toUpperCase()}-${Date.now()}`;
 
-      const newCase: DiagnosisCase = {
-        id: caseId,
-        symptom,
-        description,
-        status: 'investigating',
-        leadAgent: agentType,
-        confidence: 0,
-        messages: [],
-        timeline: [],
-        createdAt: new Date().toISOString(),
-      };
-
       set({
-        currentCase: newCase,
+        currentCase: {
+          id: caseId,
+          symptom,
+          description,
+          status: 'investigating',
+          leadAgent: agentType,
+          confidence: 0,
+          messages: [],
+          timeline: [],
+          createdAt: new Date().toISOString(),
+        },
         isRunning: true,
         proposedAction: null,
         currentAgentType: agentType,
         traces: new Map(),
+        traceLifecycle: new Map(),
         rootAgentIds: [],
         selectedAgentId: null,
+        replaySnapshot: null,
         pendingConfirmation: null,
         confirmationFlowState: 'idle',
       });
@@ -344,31 +370,26 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
 
   approveAction: () => {
     const state = get();
-    if (state.proposedAction) {
-      wsService.approveAction('current-action');
-      set((s) => ({
-        proposedAction: null,
-        currentCase: s.currentCase ? { ...s.currentCase, status: 'resolved' } : null,
-      }));
-    }
+    if (!state.proposedAction) return;
+    wsService.approveAction('current-action');
+    set((s) => ({
+      proposedAction: null,
+      currentCase: s.currentCase ? { ...s.currentCase, status: 'resolved' } : null,
+    }));
   },
 
   rejectAction: () => {
     const state = get();
-    if (state.proposedAction) {
-      wsService.rejectAction('current-action', 'User rejected');
-      set({ proposedAction: null });
-    }
+    if (!state.proposedAction) return;
+    wsService.rejectAction('current-action', 'User rejected');
+    set({ proposedAction: null });
   },
 
   respondToConfirmation: (confirmationId: string, response: any) => {
     const current = get().pendingConfirmation;
-    if (!current) {
-      return;
-    }
+    if (!current) return;
 
     wsService.respondToConfirmation(confirmationId, response);
-
     if (response?.action === 'second_confirm') {
       set({
         confirmationFlowState: 'pending_r3',
@@ -380,18 +401,14 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
       });
       return;
     }
-
     if (response?.action === 'reject' || response?.action === 'cancel') {
       set({ pendingConfirmation: null, confirmationFlowState: 'rejected', isRunning: false });
       return;
     }
-
     set({ pendingConfirmation: null });
   },
 
-  selectAgent: (agentId: string | null) => {
-    set({ selectedAgentId: agentId });
-  },
+  selectAgent: (agentId: string | null) => set({ selectedAgentId: agentId }),
 }));
 
 export function getChildAgents(traces: Map<string, AgentTrace>, parentId: string): AgentTrace[] {
