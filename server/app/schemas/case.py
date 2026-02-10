@@ -226,7 +226,8 @@ class LLMProviderResponse(BaseModel):
     id: str
     name: str
     provider: str
-    api_key: str  # Will be decrypted for display
+    api_key_masked: str
+    has_api_key: bool
     base_url: Optional[str] = None
     models: List[str]
     is_default: bool

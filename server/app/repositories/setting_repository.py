@@ -22,8 +22,31 @@ class SettingRepository(BaseRepository[Setting]):
         """Decrypt API key"""
         return encryption_service.decrypt(api_key) if api_key else ""
 
+    def _mask_api_key(self, api_key: str) -> str:
+        """Mask API key for safe response output."""
+        if not api_key:
+            return ""
+        if len(api_key) <= 4:
+            return "***"
+        if api_key.startswith("sk-"):
+            return f"sk-***{api_key[-4:]}"
+        return f"***{api_key[-4:]}"
+
+    def _build_provider_config(self, provider: LLMProvider, include_api_key: bool = False) -> dict:
+        decrypted_api_key = self._decrypt_api_key(provider.api_key)
+        config = {
+            "provider": provider.provider,
+            "api_key_masked": self._mask_api_key(decrypted_api_key),
+            "has_api_key": bool(decrypted_api_key),
+            "base_url": provider.base_url,
+            "models": json.loads(provider.models) if provider.models else [],
+        }
+        if include_api_key:
+            config["api_key"] = decrypted_api_key
+        return config
+
     @with_session
-    def get_by_type_and_id(self, session: Session, setting_type: str, setting_id: str) -> Optional[Setting]:
+    def get_by_type_and_id(self, session: Session, setting_type: str, setting_id: str, include_api_key: bool = False) -> Optional[Setting]:
         """Get setting by type and ID - routes to appropriate table"""
         if setting_type == "llm_provider":
             provider = session.query(LLMProvider).filter(LLMProvider.name == setting_id).first()
@@ -36,12 +59,7 @@ class SettingRepository(BaseRepository[Setting]):
                 setting.name = provider.name
                 setting.enabled = provider.enabled
                 setting.is_default = provider.is_default
-                setting.config = json.dumps({
-                    "provider": provider.provider,
-                    "api_key": self._decrypt_api_key(provider.api_key),
-                    "base_url": provider.base_url,
-                    "models": json.loads(provider.models) if provider.models else []
-                })
+                setting.config = json.dumps(self._build_provider_config(provider, include_api_key=include_api_key))
                 return setting
         elif setting_type == "tool":
             tool = session.query(ExternalTool).filter(ExternalTool.tool_id == setting_id).first()
@@ -57,7 +75,7 @@ class SettingRepository(BaseRepository[Setting]):
         return None
 
     @with_session
-    def get_by_type(self, session: Session, setting_type: str) -> List[Setting]:
+    def get_by_type(self, session: Session, setting_type: str, include_api_key: bool = False) -> List[Setting]:
         """Get all settings of a type - routes to appropriate table"""
         settings = []
 
@@ -72,12 +90,7 @@ class SettingRepository(BaseRepository[Setting]):
                 setting.name = provider.name
                 setting.enabled = provider.enabled
                 setting.is_default = provider.is_default
-                setting.config = json.dumps({
-                    "provider": provider.provider,
-                    "api_key": self._decrypt_api_key(provider.api_key),
-                    "base_url": provider.base_url,
-                    "models": json.loads(provider.models) if provider.models else []
-                })
+                setting.config = json.dumps(self._build_provider_config(provider, include_api_key=include_api_key))
                 settings.append(setting)
         elif setting_type == "tool":
             tools = session.query(ExternalTool).all()
@@ -95,7 +108,7 @@ class SettingRepository(BaseRepository[Setting]):
         return settings
 
     @with_session
-    def get_enabled_settings(self, session: Session, setting_type: str) -> List[Setting]:
+    def get_enabled_settings(self, session: Session, setting_type: str, include_api_key: bool = False) -> List[Setting]:
         """Get enabled settings of a type"""
         settings = []
 
@@ -110,18 +123,13 @@ class SettingRepository(BaseRepository[Setting]):
                 setting.name = provider.name
                 setting.enabled = provider.enabled
                 setting.is_default = provider.is_default
-                setting.config = json.dumps({
-                    "provider": provider.provider,
-                    "api_key": self._decrypt_api_key(provider.api_key),
-                    "base_url": provider.base_url,
-                    "models": json.loads(provider.models) if provider.models else []
-                })
+                setting.config = json.dumps(self._build_provider_config(provider, include_api_key=include_api_key))
                 settings.append(setting)
 
         return settings
 
     @with_session
-    def get_default_provider(self, session: Session) -> Optional[Setting]:
+    def get_default_provider(self, session: Session, include_api_key: bool = False) -> Optional[Setting]:
         """Get the default LLM provider"""
         provider = session.query(LLMProvider).filter(LLMProvider.is_default == True).first()
         if provider:
@@ -132,12 +140,7 @@ class SettingRepository(BaseRepository[Setting]):
             setting.name = provider.name
             setting.enabled = provider.enabled
             setting.is_default = provider.is_default
-            setting.config = json.dumps({
-                "provider": provider.provider,
-                "api_key": self._decrypt_api_key(provider.api_key),
-                "base_url": provider.base_url,
-                "models": json.loads(provider.models) if provider.models else []
-            })
+            setting.config = json.dumps(self._build_provider_config(provider, include_api_key=include_api_key))
             return setting
         return None
 
@@ -214,9 +217,10 @@ class SettingRepository(BaseRepository[Setting]):
             if provider:
                 config_dict = json.loads(config)
                 provider.provider = config_dict.get("provider", provider.provider)
-                provider.api_key = self._encrypt_api_key(config_dict.get("api_key", ""))
-                provider.base_url = config_dict.get("base_url")
-                provider.models = json.dumps(config_dict.get("models", []))
+                if "api_key" in config_dict:
+                    provider.api_key = self._encrypt_api_key(config_dict.get("api_key", ""))
+                provider.base_url = config_dict.get("base_url", provider.base_url)
+                provider.models = json.dumps(config_dict.get("models", json.loads(provider.models) if provider.models else []))
                 session.flush()
 
     @with_session

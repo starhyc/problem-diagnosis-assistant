@@ -9,7 +9,9 @@ export interface LLMProvider {
   id: string;
   name: string;
   provider: string;
-  api_key: string;
+  api_key?: string;
+  api_key_masked: string;
+  has_api_key: boolean;
   base_url?: string;
   models: string[];
   is_default: boolean;

@@ -47,6 +47,7 @@ export function LLMProviderList() {
                 </div>
                 <p className="text-sm text-text-muted">提供商: {provider.provider}</p>
                 {provider.base_url && <p className="text-sm text-text-muted">URL: {provider.base_url}</p>}
+                <p className="text-sm text-text-muted">API Key: {provider.has_api_key ? provider.api_key_masked : "未配置"}</p>
                 <p className="text-sm text-text-muted">模型: {provider.models.join(', ')}</p>
               </div>
               <div className="flex gap-2">
