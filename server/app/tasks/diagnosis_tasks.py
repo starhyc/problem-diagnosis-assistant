@@ -84,6 +84,8 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = DiagnosisMode
             "current_phase": "init",
             "paused": False,
             "cancelled": False,
+            "pending_confirmations": [],
+            "audit_logs": []
             "mode": selected_mode,
             "mode_history": decision_trace.copy(),
         }

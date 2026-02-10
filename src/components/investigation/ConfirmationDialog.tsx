@@ -1,18 +1,6 @@
-import { useState } from 'react';
-import { AlertCircle, Lightbulb, ChevronDown, ChevronRight } from 'lucide-react';
-import { statusBadges } from '../../constants';
-import { cn } from '../../lib/utils';
-
-interface ConfirmationRequired {
-  id: string;
-  actionId: string;
-  message: string;
-  description?: string;
-  options?: Array<{ label: string; value: string }>;
-  defaultOption?: string;
-  riskLevel?: 'low' | 'medium' | 'high' | 'critical';
-  timeout?: number;
-}
+import { useMemo, useState } from 'react';
+import { AlertCircle } from 'lucide-react';
+import type { ConfirmationRequired } from '../../lib/websocket';
 
 interface ConfirmationDialogProps {
   confirmation: ConfirmationRequired;
@@ -36,11 +24,12 @@ export default function ConfirmationDialog({
         action: selectedOption,
         modifiedParams,
       });
-    } else {
-      onConfirm({
-        action: selectedOption,
-      });
+      return;
     }
+
+    onConfirm({
+      action: selectedOption,
+    });
   };
 
   const riskLevelColors = {
@@ -48,7 +37,16 @@ export default function ConfirmationDialog({
     medium: 'bg-semantic-warning/10 text-semantic-warning',
     high: 'bg-semantic-danger/10 text-semantic-danger',
     critical: 'bg-semantic-danger text-white',
+    R1: 'bg-semantic-success/10 text-semantic-success',
+    R2: 'bg-semantic-warning/10 text-semantic-warning',
+    R3: 'bg-semantic-danger text-white',
   };
+
+  const displayTimeout = useMemo(() => {
+    const sec = confirmation.timeoutSeconds ?? confirmation.timeout;
+    if (!sec) return '未设置';
+    return `${sec} 秒`;
+  }, [confirmation.timeout, confirmation.timeoutSeconds]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -61,17 +59,31 @@ export default function ConfirmationDialog({
               <AlertCircle className="w-6 h-6" />
             </div>
             <div className="flex-1">
-              <h3 className="text-lg font-semibold text-text-main mb-2">
-                需要确认操作
-              </h3>
-              <p className="text-sm text-text-main mb-3">
-                {confirmation.message}
-              </p>
+              <h3 className="text-lg font-semibold text-text-main mb-2">需要确认操作</h3>
+              <p className="text-sm text-text-main mb-3">{confirmation.message}</p>
               {confirmation.description && (
                 <div className="bg-bg-elevated/50 rounded-lg p-4 text-sm text-text-muted whitespace-pre-wrap">
                   {confirmation.description}
                 </div>
               )}
+              <div className="grid grid-cols-2 gap-3 mt-3 text-xs text-text-muted">
+                <div className="bg-bg-elevated/40 rounded p-2">
+                  <div className="font-medium text-text-main">风险等级</div>
+                  <div>{confirmation.riskLevel || 'low'}</div>
+                </div>
+                <div className="bg-bg-elevated/40 rounded p-2">
+                  <div className="font-medium text-text-main">影响范围</div>
+                  <div>{confirmation.impactScope || '未提供'}</div>
+                </div>
+                <div className="bg-bg-elevated/40 rounded p-2">
+                  <div className="font-medium text-text-main">回滚方案</div>
+                  <div>{confirmation.rollbackPlan || '未提供'}</div>
+                </div>
+                <div className="bg-bg-elevated/40 rounded p-2">
+                  <div className="font-medium text-text-main">超时策略</div>
+                  <div>{confirmation.timeoutStrategy || 'auto_reject'}（{displayTimeout}）</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
