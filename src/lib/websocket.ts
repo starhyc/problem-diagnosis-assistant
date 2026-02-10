@@ -11,7 +11,7 @@ export interface JSONRPCResponse {
 }
 
 export interface WSMessage {
-  type: 'agent_message' | 'action_proposal' | 'diagnosis_status' | 'error' | 'confirmation_required' | 'action_result' | 'timeline_update' | 'confidence_update' | 'agent_trace_start' | 'agent_trace_step' | 'agent_trace_complete';
+  type: 'agent_message' | 'action_proposal' | 'diagnosis_status' | 'error' | 'confirmation_required' | 'confirmation_status' | 'action_result' | 'timeline_update' | 'confidence_update' | 'agent_trace_start' | 'agent_trace_step' | 'agent_trace_complete';
   data: any;
   timestamp: string;
 }
@@ -47,8 +47,14 @@ export interface ConfirmationRequired {
   description?: string;
   options?: Array<{ label: string; value: string }>;
   defaultOption?: string;
-  riskLevel?: 'low' | 'medium' | 'high' | 'critical';
+  riskLevel?: 'low' | 'medium' | 'high' | 'critical' | 'R1' | 'R2' | 'R3';
+  impactScope?: string;
+  rollbackPlan?: string;
+  approverRoles?: string[];
   timeout?: number;
+  timeoutSeconds?: number;
+  timeoutStrategy?: string;
+  requiresSecondConfirmation?: boolean;
 }
 
 export type MessageHandler = (message: WSMessage) => void;

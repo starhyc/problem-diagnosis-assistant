@@ -32,7 +32,13 @@ export interface DiagnosisCase {
   createdAt: string;
 }
 
-
+export type ConfirmationFlowState =
+  | 'idle'
+  | 'pending_r2'
+  | 'pending_r3'
+  | 'approved'
+  | 'rejected'
+  | 'timeout';
 
 interface DiagnosisState {
   currentCase: DiagnosisCase | null;
@@ -40,6 +46,7 @@ interface DiagnosisState {
   proposedAction: { title: string; confidence: number } | null;
   wsConnected: boolean;
   pendingConfirmation: ConfirmationRequired | null;
+  confirmationFlowState: ConfirmationFlowState;
   currentAgentType: string;
 
   // Trace state
@@ -66,6 +73,7 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
   proposedAction: null,
   wsConnected: false,
   pendingConfirmation: null,
+  confirmationFlowState: 'idle',
   currentAgentType: 'diagnosis',
   traces: new Map(),
   selectedAgentId: null,
@@ -82,7 +90,7 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
 
     wsUnsubscribe = wsService.onMessage((message: WSMessage) => {
       const state = get();
-      
+
       switch (message.type) {
         case 'agent_message': {
           const agentMsg = message.data as AgentMessage;
@@ -150,7 +158,44 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
 
         case 'confirmation_required': {
           const confirmation = message.data as ConfirmationRequired;
-          set({ pendingConfirmation: confirmation });
+          const risk = confirmation.riskLevel;
+          set({
+            pendingConfirmation: confirmation,
+            confirmationFlowState: risk === 'R3' ? 'pending_r3' : risk === 'R2' ? 'pending_r2' : 'idle',
+          });
+          break;
+        }
+
+        case 'confirmation_status': {
+          const confirmationStatus = message.data;
+          const action = confirmationStatus.action;
+          const statusValue = confirmationStatus.status;
+
+          if (statusValue === 'timed_out' || action === 'timeout') {
+            set({ pendingConfirmation: null, confirmationFlowState: 'timeout', isRunning: false });
+            break;
+          }
+
+          if (action === 'second_confirm') {
+            set((s) => ({
+              confirmationFlowState: 'pending_r3',
+              pendingConfirmation: s.pendingConfirmation
+                ? {
+                    ...s.pendingConfirmation,
+                    riskLevel: 'R3',
+                    message: `R3 二次确认：${s.pendingConfirmation.message}`,
+                  }
+                : s.pendingConfirmation,
+            }));
+            break;
+          }
+
+          if (statusValue === 'rejected' || action === 'reject' || action === 'cancel') {
+            set({ pendingConfirmation: null, confirmationFlowState: 'rejected', isRunning: false });
+            break;
+          }
+
+          set({ pendingConfirmation: null, confirmationFlowState: 'approved' });
           break;
         }
 
@@ -191,7 +236,6 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
 
         case 'agent_trace_step': {
           const stepData = message.data;
-          // Map backend field names to frontend types
           const mappedStep = {
             ...stepData,
             id: stepData.id || stepData.stepId,
@@ -282,6 +326,7 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
         rootAgentIds: [],
         selectedAgentId: null,
         pendingConfirmation: null,
+        confirmationFlowState: 'idle',
       });
 
       wsService.startDiagnosis(symptom, description, agentType);
@@ -316,7 +361,30 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
   },
 
   respondToConfirmation: (confirmationId: string, response: any) => {
+    const current = get().pendingConfirmation;
+    if (!current) {
+      return;
+    }
+
     wsService.respondToConfirmation(confirmationId, response);
+
+    if (response?.action === 'second_confirm') {
+      set({
+        confirmationFlowState: 'pending_r3',
+        pendingConfirmation: {
+          ...current,
+          riskLevel: 'R3',
+          message: `R3 二次确认：${current.message}`,
+        },
+      });
+      return;
+    }
+
+    if (response?.action === 'reject' || response?.action === 'cancel') {
+      set({ pendingConfirmation: null, confirmationFlowState: 'rejected', isRunning: false });
+      return;
+    }
+
     set({ pendingConfirmation: null });
   },
 
@@ -325,7 +393,6 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
   },
 }));
 
-// Helper functions to build agent hierarchy
 export function getChildAgents(traces: Map<string, AgentTrace>, parentId: string): AgentTrace[] {
   return Array.from(traces.values()).filter(trace => trace.parentId === parentId);
 }

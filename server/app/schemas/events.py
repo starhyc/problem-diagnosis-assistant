@@ -1,3 +1,4 @@
+import uuid
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -36,6 +37,13 @@ class EventType(str, Enum):
     ACTION_APPROVED = "action_approved"
     ACTION_REJECTED = "action_rejected"
     ACTION_EXECUTED = "action_executed"
+
+    # Confirmation events
+    CONFIRMATION_REQUIRED = "confirmation_required"
+    CONFIRMATION_RECEIVED = "confirmation_received"
+    CONFIRMATION_TIMEOUT = "confirmation_timeout"
+    CONFIRMATION_REJECTED = "confirmation_rejected"
+    CONFIRMATION_ESCALATED = "confirmation_escalated"
 
     # Task events
     TASK_SUBMITTED = "task_submitted"
@@ -98,6 +106,35 @@ class ActionEvent(BaseEvent):
     reason: Optional[str] = None
 
 
+class ConfirmationRiskLevel(str, Enum):
+    R1 = "R1"
+    R2 = "R2"
+    R3 = "R3"
+
+
+class ConfirmationResponseAction(str, Enum):
+    APPROVE = "approve"
+    REJECT = "reject"
+    CANCEL = "cancel"
+    SECOND_CONFIRM = "second_confirm"
+
+
+class ConfirmationEvent(BaseEvent):
+    confirmation_id: str
+    action_id: str
+    message: str
+    risk_level: ConfirmationRiskLevel
+    impact_scope: str
+    rollback_plan: str
+    approver_roles: List[str] = Field(default_factory=list)
+    timeout_seconds: int = 300
+    timeout_strategy: str = "auto_reject"
+    requires_second_confirmation: bool = False
+    status: Optional[str] = None
+    response_action: Optional[ConfirmationResponseAction] = None
+    response_reason: Optional[str] = None
+
+
 class TaskEvent(BaseEvent):
     task_id: str
     task_name: Optional[str] = None
@@ -108,6 +145,3 @@ class TaskEvent(BaseEvent):
 
 class TimelineEvent(BaseEvent):
     timeline_items: List[Dict[str, Any]] = Field(default_factory=list)
-
-
-import uuid

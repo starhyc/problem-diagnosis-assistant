@@ -1,5 +1,9 @@
 from typing import TypedDict, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
+from datetime import datetime
+import asyncio
+import json
+import uuid
 from app.services.agents.coordinator_agent import CoordinatorAgent
 from app.services.agents.log_agent import LogAgent
 from app.services.agents.code_agent import CodeAgent
@@ -9,10 +13,13 @@ from app.core.logging_config import get_logger
 from app.core.event_publisher import event_publisher
 from app.core.database import get_db
 from app.services.state_manager import state_manager
+from app.schemas.events import ConfirmationRiskLevel
+from app.core.redis_client import redis_client
 
 logger = get_logger(__name__)
 
 class DiagnosisState(TypedDict):
+    session_id: str
     symptom: str
     messages: List[Dict[str, Any]]
     hypothesis_tree: Dict[str, Any]
@@ -22,6 +29,8 @@ class DiagnosisState(TypedDict):
     current_phase: str
     paused: bool
     cancelled: bool
+    pending_confirmations: List[Dict[str, Any]]
+    audit_logs: List[Dict[str, Any]]
 
 class DiagnosisWorkflowEngine:
     def __init__(self):
@@ -31,6 +40,90 @@ class DiagnosisWorkflowEngine:
         self.knowledge_agent = KnowledgeAgent()
         self.metric_agent = MetricAgent()
         self.active_workflows: Dict[str, Dict[str, Any]] = {}
+        self.redis = redis_client.get_client()
+
+    def _confirmation_key(self, session_id: str, confirmation_id: str) -> str:
+        return f"confirmation:{session_id}:{confirmation_id}"
+
+    def submit_confirmation_response(self, session_id: str, confirmation_id: str, response: Dict[str, Any]) -> bool:
+        key = self._confirmation_key(session_id, confirmation_id)
+        raw = self.redis.get(key)
+        if not raw:
+            logger.warning(f"Confirmation not found: session={session_id}, confirmation_id={confirmation_id}")
+            return False
+
+        payload = json.loads(raw)
+        payload["status"] = "responded"
+        payload["response"] = response
+        payload["responded_at"] = datetime.now().isoformat()
+        self.redis.setex(key, 3600, json.dumps(payload))
+        return True
+
+    async def _request_confirmation(self, state: DiagnosisState, confirmation_data: Dict[str, Any]) -> Dict[str, Any]:
+        session_id = state.get("session_id", "unknown")
+        confirmation_id = str(uuid.uuid4())
+        timeout_seconds = confirmation_data.get("timeoutSeconds", 180)
+
+        payload = {
+            "id": confirmation_id,
+            "status": "pending",
+            "created_at": datetime.now().isoformat(),
+            "data": confirmation_data,
+        }
+        self.redis.setex(
+            self._confirmation_key(session_id, confirmation_id),
+            timeout_seconds + 3600,
+            json.dumps(payload),
+        )
+
+        event_publisher.publish_diagnosis_event(session_id, {
+            "type": "confirmation_required",
+            "id": confirmation_id,
+            **confirmation_data,
+        })
+        self._record_audit_event(session_id, "confirmation_required", {
+            "confirmation_id": confirmation_id,
+            **confirmation_data,
+        })
+
+        deadline = datetime.now().timestamp() + timeout_seconds
+        while datetime.now().timestamp() < deadline:
+            raw = self.redis.get(self._confirmation_key(session_id, confirmation_id))
+            if raw:
+                current = json.loads(raw)
+                if current.get("status") == "responded":
+                    response = current.get("response", {})
+                    self._record_audit_event(session_id, "confirmation_received", {
+                        "confirmation_id": confirmation_id,
+                        "response": response,
+                    })
+                    state["pending_confirmations"] = [
+                        c for c in state.get("pending_confirmations", []) if c.get("id") != confirmation_id
+                    ]
+                    return {
+                        "confirmation_id": confirmation_id,
+                        "status": "responded",
+                        "response": response,
+                    }
+            await asyncio.sleep(0.5)
+
+        timeout_strategy = confirmation_data.get("timeoutStrategy", "auto_reject")
+        self._record_audit_event(session_id, "confirmation_timeout", {
+            "confirmation_id": confirmation_id,
+            "timeout_strategy": timeout_strategy,
+        })
+        return {
+            "confirmation_id": confirmation_id,
+            "status": "timeout",
+            "response": {"action": "reject", "reason": f"timeout:{timeout_strategy}"},
+        }
+
+    def _record_audit_event(self, session_id: str, event_type: str, event_data: Dict[str, Any]):
+        try:
+            db = next(get_db())
+            state_manager.record_event(session_id, event_type, event_data, db)
+        except Exception as e:
+            logger.error(f"Failed to record audit event for {session_id}: {e}")
 
     def pause_workflow(self, session_id: str) -> bool:
         """Pause a running workflow"""
@@ -157,6 +250,55 @@ class DiagnosisWorkflowEngine:
         """Match with historical cases"""
         if state.get("cancelled"):
             return state
+
+        session_id = state.get("session_id", "unknown")
+        if state.get("confidence", 0) >= 70:
+            confirmation_data = {
+                "actionId": "knowledge_match",
+                "message": "即将执行高风险知识库关联操作，请确认是否继续。",
+                "description": "该操作将使用当前证据匹配历史案例，可能影响最终诊断路径。",
+                "riskLevel": ConfirmationRiskLevel.R2.value,
+                "impactScope": "历史案例检索与推荐策略",
+                "rollbackPlan": "回退到仅基于实时证据的决策流程",
+                "approverRoles": ["engineer", "admin"],
+                "timeoutSeconds": 120,
+                "timeoutStrategy": "auto_reject",
+                "requiresSecondConfirmation": True,
+                "options": [
+                    {"label": "继续执行", "value": "approve"},
+                    {"label": "二次确认", "value": "second_confirm"},
+                    {"label": "拒绝执行", "value": "reject"},
+                ],
+                "defaultOption": "approve",
+            }
+            state.setdefault("pending_confirmations", []).append(confirmation_data)
+            first_result = await self._request_confirmation(state, confirmation_data)
+            first_action = first_result.get("response", {}).get("action", "reject")
+
+            if first_result.get("status") == "timeout" or first_action == "reject":
+                state["current_phase"] = "confirmation_rejected"
+                event_publisher.publish_diagnosis_event(session_id, {
+                    "type": "confirmation_rejected",
+                    "action_id": "knowledge_match",
+                    "reason": first_result.get("response", {}).get("reason", "rejected"),
+                })
+                return state
+
+            if first_action == "second_confirm":
+                event_publisher.publish_diagnosis_event(session_id, {
+                    "type": "confirmation_escalated",
+                    "action_id": "knowledge_match",
+                    "risk_level": ConfirmationRiskLevel.R3.value,
+                })
+                second_result = await self._request_confirmation(state, {
+                    **confirmation_data,
+                    "message": "R3 二次确认：是否继续执行高风险知识库关联操作？",
+                    "riskLevel": ConfirmationRiskLevel.R3.value,
+                    "timeoutSeconds": 60,
+                })
+                if second_result.get("status") == "timeout" or second_result.get("response", {}).get("action") != "approve":
+                    state["current_phase"] = "confirmation_rejected"
+                    return state
 
         result = await self.knowledge_agent.execute_with_timeout(
             "Find similar cases",

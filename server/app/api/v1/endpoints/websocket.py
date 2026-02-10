@@ -8,6 +8,7 @@ from app.core.logging_config import get_logger
 from app.core.session_manager import session_manager
 from app.core.event_subscriber import EventSubscriber
 from app.tasks.diagnosis_tasks import run_diagnosis
+from app.core.database import get_db
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -119,6 +120,8 @@ async def handle_message(session_id: str, message: dict):
         await pause_diagnosis(session_id, data)
     elif message_type == "resume_diagnosis":
         await resume_diagnosis(session_id, data)
+    elif message_type == "confirmation_response":
+        await confirmation_response(session_id, data)
     else:
         logger.warning(f"Unknown message type: {message_type}")
         await send_error(session_id, f"Unknown message type: {message_type}")
@@ -207,4 +210,39 @@ async def resume_diagnosis(session_id: str, data: dict):
     await send_message(session_id, "diagnosis_status", {
         "status": "resumed",
         "session_id": session_id
+    })
+
+
+async def confirmation_response(session_id: str, data: dict):
+    from app.services.workflow_engine import workflow_engine
+    from app.services.state_manager import state_manager
+    confirmation_id = data.get("confirmationId", "")
+    response = data.get("response", {})
+
+    if not confirmation_id:
+        await send_error(session_id, "confirmationId is required")
+        return
+
+    accepted = workflow_engine.submit_confirmation_response(session_id, confirmation_id, response)
+    if not accepted:
+        await send_error(session_id, f"No pending confirmation found: {confirmation_id}")
+        return
+
+    try:
+        db = next(get_db())
+        state_manager.record_event(session_id, "confirmation_response", {
+            "confirmation_id": confirmation_id,
+            "response": response,
+            "source": "websocket",
+        }, db)
+    except Exception as e:
+        logger.warning(f"Failed to persist confirmation response: {e}")
+
+    action = response.get("action", "approve")
+    status = "approved" if action == "approve" else "rejected"
+    await send_message(session_id, "confirmation_status", {
+        "confirmationId": confirmation_id,
+        "status": status,
+        "action": action,
+        "session_id": session_id,
     })

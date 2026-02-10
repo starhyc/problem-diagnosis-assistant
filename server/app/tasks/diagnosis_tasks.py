@@ -44,6 +44,7 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "simple") -> 
 
         # Create initial workflow state
         workflow_state: DiagnosisState = {
+            "session_id": session_id,
             "symptom": symptom,
             "messages": [],
             "hypothesis_tree": {},
@@ -52,7 +53,9 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "simple") -> 
             "next_action": None,
             "current_phase": "init",
             "paused": False,
-            "cancelled": False
+            "cancelled": False,
+            "pending_confirmations": [],
+            "audit_logs": []
         }
 
         # Run workflow
