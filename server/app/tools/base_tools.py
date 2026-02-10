@@ -4,6 +4,7 @@ import fnmatch
 import json
 import sqlite3
 import subprocess
+from hashlib import sha256
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional, Type
@@ -11,6 +12,21 @@ from typing import Any, Dict, Optional, Type
 import requests
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+
+
+_WRITE_IDEMPOTENCY_CACHE: Dict[str, bool] = {}
+
+
+def _is_write_query(query: str) -> bool:
+    head = query.strip().split(maxsplit=1)
+    if not head:
+        return False
+    return head[0].upper() in {"INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER"}
+
+
+def _build_idempotency_key(session_id: str, action_id: str, step_id: str) -> str:
+    raw = f"{session_id}:{action_id}:{step_id}"
+    return sha256(raw.encode("utf-8")).hexdigest()
 
 
 class ToolAdapter(ABC):
@@ -96,6 +112,20 @@ class SQLiteAdapter(ToolAdapter):
         query = kwargs["query"]
         limit = kwargs.get("limit", 100)
         wrapped = query.strip().rstrip(";")
+        session_id = kwargs.get("session_id", "unknown")
+        action_id = kwargs.get("action_id", "db_query")
+        step_id = kwargs.get("step_id", "default")
+        idempotency_key = kwargs.get("idempotency_key") or _build_idempotency_key(session_id, action_id, step_id)
+
+        if _is_write_query(wrapped):
+            if idempotency_key in _WRITE_IDEMPOTENCY_CACHE:
+                return json.dumps({"status": "duplicate", "idempotency_key": idempotency_key}, ensure_ascii=False)
+            _WRITE_IDEMPOTENCY_CACHE[idempotency_key] = True
+
+            with sqlite3.connect(self.database_path) as conn:
+                cursor = conn.execute(wrapped)
+                conn.commit()
+                return json.dumps({"status": "ok", "rows_affected": cursor.rowcount, "idempotency_key": idempotency_key}, ensure_ascii=False)
 
         with sqlite3.connect(self.database_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -145,6 +175,10 @@ class GitSearchTool(BaseTool):
 class DBQueryInput(BaseModel):
     query: str = Field(description="SQL query to execute")
     limit: int = Field(default=100, description="Max rows returned")
+    session_id: str = Field(default="unknown", description="Workflow session ID")
+    action_id: str = Field(default="db_query", description="Action identifier")
+    step_id: str = Field(default="default", description="Step identifier")
+    idempotency_key: Optional[str] = Field(default=None, description="Deduplication key for write operations")
 
 
 class DBQueryTool(BaseTool):
@@ -160,5 +194,20 @@ class DBQueryTool(BaseTool):
             adapter = SQLiteAdapter(settings.database_url)
         self._adapter = adapter
 
-    def _run(self, query: str, limit: int = 100) -> str:
-        return self._adapter.execute(query=query, limit=limit)
+    def _run(
+        self,
+        query: str,
+        limit: int = 100,
+        session_id: str = "unknown",
+        action_id: str = "db_query",
+        step_id: str = "default",
+        idempotency_key: Optional[str] = None,
+    ) -> str:
+        return self._adapter.execute(
+            query=query,
+            limit=limit,
+            session_id=session_id,
+            action_id=action_id,
+            step_id=step_id,
+            idempotency_key=idempotency_key,
+        )

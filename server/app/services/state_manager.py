@@ -15,6 +15,8 @@ class DiagnosisState:
         self.confidence: int = 0
         self.evidence: List[Dict[str, Any]] = []
         self.current_phase: str = "init"
+        self.task_status: str = "submitted"
+        self.snapshot_data: Dict[str, Any] = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -25,6 +27,8 @@ class DiagnosisState:
             "confidence": self.confidence,
             "evidence": self.evidence,
             "current_phase": self.current_phase,
+            "task_status": self.task_status,
+            "snapshot_data": self.snapshot_data,
         }
 
 
@@ -32,6 +36,53 @@ class StateManager:
     def __init__(self):
         self._memory_states: Dict[str, DiagnosisState] = {}
         self._event_sequence: Dict[str, int] = {}
+        self._task_status_transitions: Dict[str, List[str]] = {
+            "submitted": ["running", "canceled", "failed"],
+            "running": ["waiting_user", "retrying", "completed", "failed", "canceled"],
+            "waiting_user": ["running", "retrying", "failed", "canceled"],
+            "retrying": ["running", "failed", "canceled"],
+            "completed": [],
+            "failed": [],
+            "canceled": [],
+        }
+
+    def validate_task_status_transition(self, from_status: str, to_status: str) -> bool:
+        if from_status == to_status:
+            return True
+        return to_status in self._task_status_transitions.get(from_status, [])
+
+    def apply_task_status(self, state_data: Dict[str, Any], task_status: str):
+        current_status = state_data.get("task_status", "submitted")
+        if not self.validate_task_status_transition(current_status, task_status):
+            raise ValueError(f"Invalid task status transition: {current_status} -> {task_status}")
+        state_data["task_status"] = task_status
+
+    def transition_task_status(
+        self,
+        session_id: str,
+        task_status: str,
+        db: Session,
+        event_data: Optional[Dict[str, Any]] = None,
+    ):
+        state = self._memory_states.get(session_id)
+        if not state:
+            state = self.create_state(session_id)
+
+        previous = state.task_status
+        if not self.validate_task_status_transition(previous, task_status):
+            raise ValueError(f"Invalid task status transition: {previous} -> {task_status}")
+
+        state.task_status = task_status
+        self.record_event(
+            session_id,
+            "task_status_changed",
+            {
+                "from_status": previous,
+                "to_status": task_status,
+                **(event_data or {}),
+            },
+            db,
+        )
 
     def get_state(self, session_id: str) -> Optional[DiagnosisState]:
         """Get current state from memory"""
@@ -120,6 +171,8 @@ class StateManager:
             state.confidence = data.get("confidence", 0)
             state.evidence = data.get("evidence", [])
             state.current_phase = data.get("current_phase", "init")
+            state.task_status = data.get("task_status", "submitted")
+            state.snapshot_data = data.get("snapshot_data", {})
             self._memory_states[session_id] = state
             return state
         return None
@@ -221,6 +274,7 @@ class StateManager:
                     "session_id": row.session_id,
                     "snapshot_version": row.snapshot_version,
                     "current_phase": snapshot_data.get("current_phase", "init"),
+                    "task_status": snapshot_data.get("task_status", "submitted"),
                     "confidence": snapshot_data.get("confidence", 0),
                     "message_count": len(messages),
                     "event_count": row.event_count,
@@ -307,6 +361,8 @@ class StateManager:
             state.evidence.append(event_data)
         elif event_type == "phase_changed":
             state.current_phase = event_data.get("phase", state.current_phase)
+        elif event_type == "task_status_changed":
+            state.task_status = event_data.get("to_status", state.task_status)
 
     def get_current_state(self, session_id: str, db: Session) -> Optional[DiagnosisState]:
         """Get current state with latest events"""

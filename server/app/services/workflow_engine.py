@@ -36,6 +36,8 @@ class DiagnosisState(TypedDict, total=False):
     mode: str
     mode_history: List[Dict[str, Any]]
     trace_root_id: str
+    task_status: str
+    snapshot_data: Dict[str, Any]
 
 
 class DiagnosisWorkflowEngine:
@@ -57,6 +59,56 @@ class DiagnosisWorkflowEngine:
     def _confirmation_key(self, session_id: str, confirmation_id: str) -> str:
         return f"confirmation:{session_id}:{confirmation_id}"
 
+    def _idempotency_key(self, session_id: str, action_id: str, step_id: str) -> str:
+        return f"idempotency:{session_id}:{action_id}:{step_id}"
+
+    def _validate_idempotency(self, session_id: str, action_id: str, step_id: str) -> bool:
+        key = self._idempotency_key(session_id, action_id, step_id)
+        accepted = self.redis.set(key, "1", nx=True, ex=3600)
+        return bool(accepted)
+
+    def _set_task_status(self, state: DiagnosisState, task_status: str):
+        state_manager.apply_task_status(state, task_status)
+
+    def _persist_node_snapshot(
+        self,
+        state: DiagnosisState,
+        node_name: str,
+        node_input: Dict[str, Any],
+        node_output: Dict[str, Any],
+        evidence_indexes: List[int],
+    ):
+        session_id = state.get("session_id", "unknown")
+        snapshot_data = state.setdefault("snapshot_data", {})
+        checkpoints = snapshot_data.setdefault("node_checkpoints", [])
+        checkpoints.append(
+            {
+                "node_name": node_name,
+                "node_input": node_input,
+                "node_output": node_output,
+                "evidence_indexes": evidence_indexes,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+
+        try:
+            db = next(get_db())
+            state_manager.update_state(
+                session_id,
+                {
+                    "messages": state.get("messages", []),
+                    "hypothesis_tree": state.get("hypothesis_tree", {}),
+                    "evidence": state.get("evidence", []),
+                    "confidence": state.get("confidence", 0),
+                    "current_phase": state.get("current_phase", "init"),
+                    "task_status": state.get("task_status", "running"),
+                    "snapshot_data": snapshot_data,
+                },
+            )
+            state_manager.save_snapshot(session_id, db)
+        except Exception as exc:
+            logger.warning(f"Failed to persist node snapshot for {session_id}/{node_name}: {exc}")
+
     def _trace_context(self, state: DiagnosisState, agent_name: str, parent_id: Optional[str], task: str, phase: str) -> Dict[str, Any]:
         return {
             "session_id": state.get("session_id", "unknown"),
@@ -75,6 +127,16 @@ class DiagnosisWorkflowEngine:
             logger.error(f"Failed to record audit event for {session_id}: {e}")
 
     def submit_confirmation_response(self, session_id: str, confirmation_id: str, response: Dict[str, Any]) -> bool:
+        action_id = response.get("actionId") or response.get("action_id") or confirmation_id
+        step_id = response.get("stepId") or response.get("step_id") or "confirmation_response"
+        idempotency_key = self._idempotency_key(session_id, action_id, step_id)
+        if not self._validate_idempotency(session_id, action_id, step_id):
+            logger.warning(
+                f"Duplicate confirmation response dropped: session={session_id}, "
+                f"action_id={action_id}, step_id={step_id}, idempotency_key={idempotency_key}"
+            )
+            return False
+
         key = self._confirmation_key(session_id, confirmation_id)
         raw = self.redis.get(key)
         if not raw:
@@ -85,11 +147,14 @@ class DiagnosisWorkflowEngine:
         payload["status"] = "responded"
         payload["response"] = response
         payload["responded_at"] = datetime.now().isoformat()
+        payload["idempotency_key"] = idempotency_key
         self.redis.setex(key, 3600, json.dumps(payload))
         return True
 
     async def _request_confirmation(self, state: DiagnosisState, confirmation_data: Dict[str, Any]) -> Dict[str, Any]:
         session_id = state.get("session_id", "unknown")
+        self._set_task_status(state, "waiting_user")
+        state["current_phase"] = "waiting_user"
         confirmation_id = str(uuid.uuid4())
         timeout_seconds = confirmation_data.get("timeoutSeconds", 180)
 
@@ -129,6 +194,7 @@ class DiagnosisWorkflowEngine:
                     state["pending_confirmations"] = [
                         c for c in state.get("pending_confirmations", []) if c.get("id") != confirmation_id
                     ]
+                    self._set_task_status(state, "running")
                     return {
                         "confirmation_id": confirmation_id,
                         "status": "responded",
@@ -175,16 +241,29 @@ class DiagnosisWorkflowEngine:
         state.setdefault("mode_history", [])
         state["mode"] = selected_mode
         state.setdefault("trace_root_id", str(uuid.uuid4()))
+        state.setdefault("task_status", "submitted")
 
         try:
+            self._set_task_status(state, "running")
             executor = self.executors[selected_mode]
-            return await executor(state)
+            result = await executor(state)
+            if result.get("cancelled"):
+                self._set_task_status(result, "canceled")
+                result["current_phase"] = "canceled"
+            elif result.get("task_status") != "waiting_user":
+                self._set_task_status(result, "completed")
+                result["current_phase"] = "completed"
+            return result
         except Exception as exc:
             logger.warning(f"Mode execution failed in {selected_mode}: {exc}")
             fallback_mode = self._fallback_mode(selected_mode)
             if fallback_mode == selected_mode:
+                self._set_task_status(state, "failed")
+                state["current_phase"] = "failed"
                 raise
 
+            self._set_task_status(state, "retrying")
+            state["current_phase"] = "retrying"
             state["mode_history"].append(
                 {
                     "from": selected_mode,
@@ -204,7 +283,14 @@ class DiagnosisWorkflowEngine:
                 },
             )
             state["mode"] = fallback_mode
-            return await self.executors[fallback_mode](state)
+            result = await self.executors[fallback_mode](state)
+            if result.get("cancelled"):
+                self._set_task_status(result, "canceled")
+                result["current_phase"] = "canceled"
+            else:
+                self._set_task_status(result, "completed")
+                result["current_phase"] = "completed"
+            return result
 
     def switch_mode(self, session_id: str, mode: str, reason: str) -> bool:
         if session_id not in self.active_workflows or mode not in self.executors:
@@ -446,6 +532,13 @@ class DiagnosisWorkflowEngine:
         )
         state["messages"].append(result)
         state["current_phase"] = "analysis"
+        self._persist_node_snapshot(
+            state,
+            "coordinator_init",
+            {"symptom": state.get("symptom")},
+            {"result": result},
+            [],
+        )
         event_publisher.publish_diagnosis_event(session_id, {"type": "workflow_node_completed", "node_name": "coordinator_init"})
         return state
 
@@ -466,17 +559,26 @@ class DiagnosisWorkflowEngine:
         )
         log_result, metric_result = await asyncio.gather(log_task, metric_task)
 
+        base_evidence_len = len(state.get("evidence", []))
         state["messages"].extend([log_result, metric_result])
         state["evidence"].extend([
             {"type": "log", "data": log_result},
             {"type": "metric", "data": metric_result},
         ])
+        self._persist_node_snapshot(
+            state,
+            "parallel_analysis",
+            {"symptom": state.get("symptom")},
+            {"log_result": log_result, "metric_result": metric_result},
+            list(range(base_evidence_len, len(state.get("evidence", [])))),
+        )
         return state
 
     async def _code_analysis(self, state: DiagnosisState) -> DiagnosisState:
         if state.get("cancelled"):
             return state
 
+        base_evidence_len = len(state.get("evidence", []))
         result = await self.code_agent.execute_with_timeout(
             "Analyze code and configuration",
             {
@@ -487,6 +589,13 @@ class DiagnosisWorkflowEngine:
         )
         state["messages"].append(result)
         state["evidence"].append({"type": "code", "data": result})
+        self._persist_node_snapshot(
+            state,
+            "code_analysis",
+            {"symptom": state.get("symptom")},
+            {"result": result},
+            list(range(base_evidence_len, len(state.get("evidence", [])))),
+        )
         return state
 
     async def _coordinator_synthesis(self, state: DiagnosisState) -> DiagnosisState:
@@ -503,6 +612,13 @@ class DiagnosisWorkflowEngine:
         )
         state["messages"].append(result)
         state["confidence"] = 70
+        self._persist_node_snapshot(
+            state,
+            "coordinator_synthesis",
+            {"evidence_count": len(state.get("evidence", []))},
+            {"result": result, "confidence": state.get("confidence", 0)},
+            [],
+        )
         return state
 
     async def _knowledge_match(self, state: DiagnosisState) -> DiagnosisState:
@@ -568,6 +684,13 @@ class DiagnosisWorkflowEngine:
         )
         state["messages"].append(result)
         state["confidence"] = 85
+        self._persist_node_snapshot(
+            state,
+            "knowledge_match",
+            {"symptom": state.get("symptom")},
+            {"result": result, "confidence": state.get("confidence", 0)},
+            [],
+        )
         return state
 
     async def _final_decision(self, state: DiagnosisState) -> DiagnosisState:
@@ -585,6 +708,13 @@ class DiagnosisWorkflowEngine:
         )
         state["messages"].append(result)
         state["current_phase"] = "completed"
+        self._persist_node_snapshot(
+            state,
+            "final_decision",
+            {"evidence_count": len(state.get("evidence", [])), "confidence": state.get("confidence", 0)},
+            {"result": result},
+            [],
+        )
         return state
 
     def _should_query_knowledge(self, state: DiagnosisState) -> str:
