@@ -241,6 +241,21 @@ class DiagnosisActionResponse(BaseModel):
     description: str
 
 
+class StopDiagnosisRequest(BaseModel):
+    session_id: str
+
+
+class ActionApprovalRequest(BaseModel):
+    session_id: str
+    action_id: str
+
+
+class ActionRejectRequest(BaseModel):
+    session_id: str
+    action_id: str
+    reason: Optional[str] = None
+
+
 # LLM Provider schemas
 class LLMProviderRequest(BaseModel):
     name: str

@@ -11,6 +11,9 @@ from app.schemas.case import (
     HypothesisNodeResponse,
     StartDiagnosisRequest,
     DiagnosisActionResponse,
+    StopDiagnosisRequest,
+    ActionApprovalRequest,
+    ActionRejectRequest,
 )
 from app.repositories.agent_repository import AgentRepository
 from app.tasks.diagnosis_tasks import run_diagnosis
@@ -160,11 +163,13 @@ def start_diagnosis(request: StartDiagnosisRequest):
 
 
 @router.post("/stop")
-def stop_diagnosis(session_id: str):
+def stop_diagnosis(request: StopDiagnosisRequest):
     from app.services.workflow_engine import workflow_engine
+    session_id = request.session_id
     success = workflow_engine.cancel_workflow(session_id)
 
     if success:
+        session_manager.delete_session(session_id)
         return {"status": "stopped", "session_id": session_id, "message": "Diagnosis stopped"}
     else:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -193,12 +198,19 @@ def get_proposed_action():
 
 
 @router.post("/action/approve")
-def approve_action(session_id: str, action_id: str):
-    logger.info(f"Action approved: session_id={session_id}, action_id={action_id}")
-    return {"status": "approved", "session_id": session_id, "action_id": action_id}
+def approve_action(request: ActionApprovalRequest):
+    logger.info(f"Action approved: session_id={request.session_id}, action_id={request.action_id}")
+    return {"status": "approved", "session_id": request.session_id, "action_id": request.action_id}
 
 
 @router.post("/action/reject")
-def reject_action(session_id: str, action_id: str, reason: str = ""):
-    logger.info(f"Action rejected: session_id={session_id}, action_id={action_id}, reason={reason}")
-    return {"status": "rejected", "session_id": session_id, "action_id": action_id, "reason": reason}
+def reject_action(request: ActionRejectRequest):
+    logger.info(
+        f"Action rejected: session_id={request.session_id}, action_id={request.action_id}, reason={request.reason}"
+    )
+    return {
+        "status": "rejected",
+        "session_id": request.session_id,
+        "action_id": request.action_id,
+        "reason": request.reason,
+    }
