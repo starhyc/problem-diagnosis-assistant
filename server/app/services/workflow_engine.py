@@ -1,10 +1,9 @@
 from typing import TypedDict, List, Dict, Any, Optional
 import asyncio
-from langgraph.graph import StateGraph, END
-from datetime import datetime
-import asyncio
 import json
 import uuid
+from datetime import datetime
+from langgraph.graph import StateGraph, END
 from app.services.agents.coordinator_agent import CoordinatorAgent
 from app.services.agents.log_agent import LogAgent
 from app.services.agents.code_agent import CodeAgent
@@ -18,10 +17,6 @@ from app.core.database import get_db
 from app.services.state_manager import state_manager
 from app.schemas.events import ConfirmationRiskLevel
 from app.core.redis_client import redis_client
-
-logger = get_logger(__name__)
-
-class DiagnosisState(TypedDict):
 
 logger = get_logger(__name__)
 
@@ -41,6 +36,7 @@ class DiagnosisState(TypedDict, total=False):
     audit_logs: List[Dict[str, Any]]
     mode: str
     mode_history: List[Dict[str, Any]]
+    trace_root_id: str
 
 
 class DiagnosisWorkflowEngine:
@@ -52,9 +48,32 @@ class DiagnosisWorkflowEngine:
         self.metric_agent = MetricAgent()
         self.active_workflows: Dict[str, Dict[str, Any]] = {}
         self.redis = redis_client.get_client()
+        self.executors = {
+            DiagnosisMode.PRD_MINIMAL.value: MinimalExecutor(),
+            DiagnosisMode.PRD_STANDARD.value: StandardExecutor(),
+            DiagnosisMode.PRD_DEEP.value: DeepExecutor(),
+            DiagnosisMode.PRD_SWARM.value: SwarmExecutor(),
+        }
 
     def _confirmation_key(self, session_id: str, confirmation_id: str) -> str:
         return f"confirmation:{session_id}:{confirmation_id}"
+
+    def _trace_context(self, state: DiagnosisState, agent_name: str, parent_id: Optional[str], task: str, phase: str) -> Dict[str, Any]:
+        return {
+            "session_id": state.get("session_id", "unknown"),
+            "trace_agent_id": str(uuid.uuid4()),
+            "trace_parent_id": parent_id,
+            "task": task,
+            "phase": phase,
+            "agent_name": agent_name,
+        }
+
+    def _record_audit_event(self, session_id: str, event_type: str, event_data: Dict[str, Any]):
+        try:
+            db = next(get_db())
+            state_manager.record_event(session_id, event_type, event_data, db)
+        except Exception as e:
+            logger.error(f"Failed to record audit event for {session_id}: {e}")
 
     def submit_confirmation_response(self, session_id: str, confirmation_id: str, response: Dict[str, Any]) -> bool:
         key = self._confirmation_key(session_id, confirmation_id)
@@ -129,19 +148,6 @@ class DiagnosisWorkflowEngine:
             "response": {"action": "reject", "reason": f"timeout:{timeout_strategy}"},
         }
 
-    def _record_audit_event(self, session_id: str, event_type: str, event_data: Dict[str, Any]):
-        try:
-            db = next(get_db())
-            state_manager.record_event(session_id, event_type, event_data, db)
-        except Exception as e:
-            logger.error(f"Failed to record audit event for {session_id}: {e}")
-        self.executors = {
-            DiagnosisMode.PRD_MINIMAL.value: MinimalExecutor(),
-            DiagnosisMode.PRD_STANDARD.value: StandardExecutor(),
-            DiagnosisMode.PRD_DEEP.value: DeepExecutor(),
-            DiagnosisMode.PRD_SWARM.value: SwarmExecutor(),
-        }
-
     def pause_workflow(self, session_id: str) -> bool:
         if session_id in self.active_workflows:
             self.active_workflows[session_id]["paused"] = True
@@ -167,6 +173,7 @@ class DiagnosisWorkflowEngine:
         selected_mode = mode if mode in self.executors else DiagnosisMode.PRD_STANDARD.value
         state.setdefault("mode_history", [])
         state["mode"] = selected_mode
+        state.setdefault("trace_root_id", str(uuid.uuid4()))
 
         try:
             executor = self.executors[selected_mode]
@@ -231,9 +238,16 @@ class DiagnosisWorkflowEngine:
         if state.get("cancelled"):
             return state
 
+        trace_ctx = self._trace_context(
+            state,
+            "Coordinator Agent",
+            state.get("trace_root_id"),
+            state["symptom"],
+            "analysis",
+        )
         result = await self.coordinator.execute_with_timeout(
             state["symptom"],
-            {"phase": "analysis"},
+            {"phase": "analysis", **trace_ctx},
             mode=state.get("mode"),
         )
         state["messages"].append(result)
@@ -273,9 +287,16 @@ class DiagnosisWorkflowEngine:
         session_id = state.get("session_id", "unknown")
         event_publisher.publish_diagnosis_event(session_id, {"type": "workflow_node_entered", "node_name": "coordinator_init"})
 
+        trace_ctx = self._trace_context(
+            state,
+            "Coordinator Agent",
+            state.get("trace_root_id"),
+            f"Analyze symptom: {state['symptom']}",
+            "init",
+        )
         result = await self.coordinator.execute_with_timeout(
             f"Analyze symptom: {state['symptom']}",
-            {"phase": "init"},
+            {"phase": "init", **trace_ctx},
             mode=state.get("mode"),
         )
         state["messages"].append(result)
@@ -287,8 +308,17 @@ class DiagnosisWorkflowEngine:
         if state.get("cancelled"):
             return state
 
-        log_task = self.log_agent.execute_with_timeout(state["symptom"], {"phase": "analysis"}, mode=state.get("mode"))
-        metric_task = self.metric_agent.execute_with_timeout(state["symptom"], {"phase": "analysis"}, mode=state.get("mode"))
+        root_id = state.get("trace_root_id")
+        log_task = self.log_agent.execute_with_timeout(
+            state["symptom"],
+            {"phase": "analysis", **self._trace_context(state, "Log Analysis Agent", root_id, state["symptom"], "analysis")},
+            mode=state.get("mode"),
+        )
+        metric_task = self.metric_agent.execute_with_timeout(
+            state["symptom"],
+            {"phase": "analysis", **self._trace_context(state, "Metric Analysis Agent", root_id, state["symptom"], "analysis")},
+            mode=state.get("mode"),
+        )
         log_result, metric_result = await asyncio.gather(log_task, metric_task)
 
         state["messages"].extend([log_result, metric_result])
@@ -304,7 +334,10 @@ class DiagnosisWorkflowEngine:
 
         result = await self.code_agent.execute_with_timeout(
             "Analyze code and configuration",
-            {"symptom": state["symptom"]},
+            {
+                "symptom": state["symptom"],
+                **self._trace_context(state, "Code Analysis Agent", state.get("trace_root_id"), "Analyze code and configuration", "analysis"),
+            },
             mode=state.get("mode"),
         )
         state["messages"].append(result)
@@ -317,7 +350,10 @@ class DiagnosisWorkflowEngine:
 
         result = await self.coordinator.execute_with_timeout(
             "Synthesize analysis results",
-            {"evidence": state["evidence"]},
+            {
+                "evidence": state["evidence"],
+                **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "Synthesize analysis results", "synthesis"),
+            },
             mode=state.get("mode"),
         )
         state["messages"].append(result)
@@ -379,7 +415,10 @@ class DiagnosisWorkflowEngine:
 
         result = await self.knowledge_agent.execute_with_timeout(
             "Find similar cases",
-            {"symptom": state["symptom"]},
+            {
+                "symptom": state["symptom"],
+                **self._trace_context(state, "Knowledge Agent", state.get("trace_root_id"), "Find similar cases", "knowledge"),
+            },
             mode=state.get("mode"),
         )
         state["messages"].append(result)
@@ -392,7 +431,11 @@ class DiagnosisWorkflowEngine:
 
         result = await self.coordinator.execute_with_timeout(
             "Generate final diagnosis",
-            {"evidence": state["evidence"], "confidence": state["confidence"]},
+            {
+                "evidence": state["evidence"],
+                "confidence": state["confidence"],
+                **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "Generate final diagnosis", "finalize"),
+            },
             mode=state.get("mode"),
         )
         state["messages"].append(result)

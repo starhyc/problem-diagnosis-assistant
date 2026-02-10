@@ -15,6 +15,11 @@ class EventType(str, Enum):
     DIAGNOSIS_CANCELLED = "diagnosis_cancelled"
 
     # Agent events
+    # Agent trace events
+    AGENT_TRACE_START = "agent_trace_start"
+    AGENT_TRACE_STEP = "agent_trace_step"
+    AGENT_TRACE_COMPLETE = "agent_trace_complete"
+
     AGENT_STARTED = "agent_started"
     AGENT_COMPLETED = "agent_completed"
     AGENT_FAILED = "agent_failed"
