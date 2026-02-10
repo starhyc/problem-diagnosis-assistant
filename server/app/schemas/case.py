@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
 
@@ -153,6 +153,7 @@ class SettingsDataResponse(BaseModel):
 
 class StartDiagnosisRequest(BaseModel):
     agent_type: str = "diagnosis"
+    mode: Literal["auto", "prd_minimal", "prd_standard", "prd_deep", "prd_swarm"] = "auto"
     problem_description: str
     description: Optional[str] = None
     files: Optional[Dict[str, List[str]]] = None

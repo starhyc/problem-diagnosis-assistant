@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { PlayCircle, StopCircle, Bot } from 'lucide-react';
 import { useDiagnosisStore } from '../store/diagnosisStore';
 import { useAuthStore, hasPermission } from '../store/authStore';
-import { AgentType, AGENT_TYPES, ModelType } from '../types/agent';
+import { AgentType, AGENT_TYPES, ModelType, DiagnosisMode, DIAGNOSIS_MODES } from '../types/agent';
 import {
   AgentTypeSelector,
   FileUploader,
@@ -22,6 +22,7 @@ export default function Investigation() {
   const [problemDescription, setProblemDescription] = useState('MySQL连接池耗尽导致服务不可用');
   const [selectedAgentType, setSelectedAgentType] = useState<AgentType>('diagnosis');
   const [selectedModel, setSelectedModel] = useState<ModelType>('gpt-4');
+  const [selectedMode, setSelectedMode] = useState<DiagnosisMode>('auto');
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, File[]>>({});
   const [activeTab, setActiveTab] = useState<'agents' | 'timeline' | 'evidence'>('agents');
   const [leftWidth, setLeftWidth] = useState(320);
@@ -57,7 +58,7 @@ export default function Investigation() {
 
   const handleStartAnalysis = () => {
     if (!problemDescription.trim()) return;
-    startDiagnosis(selectedAgentType, problemDescription, '');
+    startDiagnosis(selectedAgentType, problemDescription, '', selectedMode);
   };
 
   const handleStopAnalysis = () => {
@@ -93,6 +94,8 @@ export default function Investigation() {
           uploadedFiles={uploadedFiles}
           onFilesChange={setUploadedFiles}
           agentConfig={currentAgentConfig}
+          selectedMode={selectedMode}
+          onModeChange={setSelectedMode}
           isRunning={isRunning}
           onStartAnalysis={handleStartAnalysis}
           onStopAnalysis={handleStopAnalysis}
@@ -102,7 +105,7 @@ export default function Investigation() {
 
         <CenterPanel
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={(tab) => setActiveTab(tab as 'agents' | 'timeline' | 'evidence')}
           tabs={tabs}
           currentCase={currentCase}
           agents={currentAgentConfig ? [currentAgentConfig].map(t => ({
@@ -199,6 +202,8 @@ function LeftPanel({
   uploadedFiles,
   onFilesChange,
   agentConfig,
+  selectedMode,
+  onModeChange,
   isRunning,
   onStartAnalysis,
   onStopAnalysis,
@@ -213,6 +218,8 @@ function LeftPanel({
   uploadedFiles: Record<string, File[]>;
   onFilesChange: (files: Record<string, File[]>) => void;
   agentConfig: any;
+  selectedMode: DiagnosisMode;
+  onModeChange: (mode: DiagnosisMode) => void;
   isRunning: boolean;
   onStartAnalysis: () => void;
   onStopAnalysis: () => void;
@@ -245,6 +252,25 @@ function LeftPanel({
             onFilesChange={onFilesChange}
           />
         )}
+
+        <div className="mt-3">
+          <h3 className="text-sm font-semibold text-text-main mb-2">诊断模式</h3>
+          <select
+            value={selectedMode}
+            onChange={(e) => onModeChange(e.target.value as DiagnosisMode)}
+            disabled={isRunning}
+            className="w-full bg-bg-input border border-border-subtle rounded-lg p-2 text-sm text-text-main focus:outline-none focus:border-primary disabled:opacity-50"
+          >
+            {DIAGNOSIS_MODES.map((mode) => (
+              <option key={mode.id} value={mode.id}>
+                {mode.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-text-muted mt-2">
+            {selectedMode === 'auto' ? '自动推荐：系统按任务特征决策模式。' : `手动覆盖：已强制选择 ${DIAGNOSIS_MODES.find(m => m.id === selectedMode)?.name}。`}
+          </p>
+        </div>
 
         {!isRunning ? (
           <button

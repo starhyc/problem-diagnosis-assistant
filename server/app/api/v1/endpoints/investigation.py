@@ -140,13 +140,13 @@ def get_investigation_data():
 @router.post("/start")
 def start_diagnosis(request: StartDiagnosisRequest):
     session_id = str(uuid.uuid4())
-    mode = request.mode if hasattr(request, 'mode') else "simple"
+    mode = request.mode if hasattr(request, 'mode') else "prd_standard"
 
     logger.info(f"Starting diagnosis: session_id={session_id}, problem={request.problem_description}")
 
     try:
         # Submit Celery task
-        task = run_diagnosis.delay(session_id, request.problem_description, mode)
+        task = run_diagnosis.delay(session_id, request.problem_description, mode, request.context)
 
         return {
             "session_id": session_id,

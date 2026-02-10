@@ -139,7 +139,7 @@ async def send_error(session_id: str, error_message: str):
 
 async def start_diagnosis(session_id: str, data: dict):
     symptom = data.get("symptom", "")
-    mode = data.get("mode", "simple")
+    mode = data.get("mode", "prd_standard")
     user_id = data.get("user_id", "anonymous")
 
     logger.info(f"Starting diagnosis [{session_id}]: symptom={symptom}, mode={mode}")
@@ -152,7 +152,7 @@ async def start_diagnosis(session_id: str, data: dict):
         await manager.subscribe_to_events(session_id)
 
         # Submit Celery task
-        task = run_diagnosis.delay(session_id, symptom, mode)
+        task = run_diagnosis.delay(session_id, symptom, mode, data.get("context"))
 
         await send_message(session_id, "diagnosis_started", {
             "session_id": session_id,

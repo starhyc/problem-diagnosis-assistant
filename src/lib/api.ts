@@ -259,7 +259,8 @@ export const investigationApi = {
     problemDescription: string,
     description?: string,
     files?: Record<string, string[]>,
-    context?: any
+    context?: any,
+    mode: string = 'auto'
   ): Promise<any> {
     return request('/investigation/start', {
       method: 'POST',
@@ -269,6 +270,7 @@ export const investigationApi = {
         description,
         files,
         context,
+        mode,
       }),
     });
   },
