@@ -47,8 +47,25 @@ function CollapsibleSection({ title, children, defaultExpanded = true, sectionKe
 }
 
 export default function Settings() {
-  const { loadLLMProviders, loadTools, loading, error } = useSettingsStore();
+  const {
+    loadLLMProviders,
+    loadTools,
+    loadMCPServers,
+    saveMCPServer,
+    toggleMCPServer,
+    testMCPServer,
+    loadSkills,
+    uploadSkill,
+    toggleSkill,
+    executeSkill,
+    mcpServers,
+    skills,
+    loading,
+    error,
+  } = useSettingsStore();
   const { user } = useAuthStore();
+
+  const [newMcp, setNewMcp] = useState({ id: '', name: '', transport: 'http', endpoint: '', enabled: true, version: 'latest' });
 
   useEffect(() => {
     if (user?.role !== 'admin') {
@@ -57,6 +74,8 @@ export default function Settings() {
     }
     loadLLMProviders();
     loadTools();
+    loadMCPServers();
+    loadSkills();
   }, [user]);
 
   if (user?.role !== 'admin') {
@@ -100,6 +119,73 @@ export default function Settings() {
 
         <CollapsibleSection title="外部工具" sectionKey="external-tools" defaultExpanded={true}>
           <ToolList />
+        </CollapsibleSection>
+
+        <CollapsibleSection title="MCP 管理" sectionKey="mcp-management" defaultExpanded={true}>
+          <div className="space-y-3">
+            <div className="grid grid-cols-6 gap-2">
+              <input className="col-span-1 border rounded px-2 py-1" placeholder="ID" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} />
+              <input className="col-span-1 border rounded px-2 py-1" placeholder="名称" value={newMcp.name} onChange={(e) => setNewMcp({ ...newMcp, name: e.target.value })} />
+              <input className="col-span-1 border rounded px-2 py-1" placeholder="传输" value={newMcp.transport} onChange={(e) => setNewMcp({ ...newMcp, transport: e.target.value })} />
+              <input className="col-span-2 border rounded px-2 py-1" placeholder="Endpoint" value={newMcp.endpoint} onChange={(e) => setNewMcp({ ...newMcp, endpoint: e.target.value })} />
+              <button className="border rounded px-2 py-1" onClick={() => saveMCPServer(newMcp)}>保存</button>
+            </div>
+
+            {mcpServers.map((server) => (
+              <div key={server.id} className="flex items-center justify-between border rounded p-3">
+                <div>
+                  <div className="font-medium">{server.name} ({server.version})</div>
+                  <div className="text-xs text-text-muted">{server.transport} · {server.endpoint}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button className="border rounded px-2 py-1" onClick={() => toggleMCPServer(server.id, !server.enabled)}>{server.enabled ? '停用' : '启用'}</button>
+                  <button className="border rounded px-2 py-1" onClick={async () => {
+                    const result = await testMCPServer(server.id);
+                    alert(result.success ? '连接成功' : `连接失败: ${result.message}`);
+                  }}>测试连接</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Skill 管理" sectionKey="skill-management" defaultExpanded={true}>
+          <div className="space-y-3">
+            <input
+              type="file"
+              accept=".zip,.tar,.tgz,.tar.gz"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                await uploadSkill(file);
+                alert('Skill 上传成功');
+              }}
+            />
+
+            {skills.map((skill) => (
+              <div key={skill.id} className="flex items-center justify-between border rounded p-3">
+                <div>
+                  <div className="font-medium">{skill.name} ({skill.version})</div>
+                  <div className="text-xs text-text-muted">{skill.id} · {skill.entrypoint}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button className="border rounded px-2 py-1" onClick={() => toggleSkill(skill.id, !skill.enabled)}>{skill.enabled ? '停用' : '启用'}</button>
+                  <button className="border rounded px-2 py-1" onClick={async () => {
+                    const result = await executeSkill(skill.id, false);
+                    if (result.status === 'approval_required') {
+                      const ok = confirm('此 Skill 需要权限审批，是否授权执行？');
+                      if (ok) {
+                        const rerun = await executeSkill(skill.id, true);
+                        alert(rerun.returncode === 0 ? '执行成功' : `执行失败: ${rerun.stderr || rerun.stdout}`);
+                      }
+                    } else {
+                      alert(result.returncode === 0 ? '执行成功' : `执行失败: ${result.stderr || result.stdout}`);
+                    }
+                  }}>沙盒测试</button>
+                </div>
+              </div>
+            ))}
+          </div>
         </CollapsibleSection>
       </div>
     </div>

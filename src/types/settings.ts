@@ -16,6 +16,25 @@ export interface LLMProvider {
   enabled: boolean;
 }
 
+export interface MCPServer {
+  id: string;
+  name: string;
+  transport: string;
+  endpoint: string;
+  enabled: boolean;
+  version: string;
+}
+
+export interface SkillPackage {
+  id: string;
+  name: string;
+  enabled: boolean;
+  description?: string;
+  version: string;
+  entrypoint: string;
+  permissions: Record<string, boolean | number | string>;
+}
+
 export interface TestResult {
   success: boolean;
   message: string;
@@ -24,4 +43,6 @@ export interface TestResult {
 export interface SettingsData {
   tools: Tool[];
   llmProviders: LLMProvider[];
+  mcpServers: MCPServer[];
+  skills: SkillPackage[];
 }
