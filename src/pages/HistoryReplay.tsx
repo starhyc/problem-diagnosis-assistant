@@ -102,6 +102,23 @@ export default function HistoryReplay() {
   }, [rootAgentIds, selectedAgentId]);
 
   const selectedTrace = selectedAgentId ? traces.get(selectedAgentId) || null : null;
+  const confirmationPoints = useMemo(
+    () =>
+      events
+        .slice(0, Math.max(0, playIndex + 1))
+        .filter((event) => ['confirmation_required', 'confirmation_gate_decision', 'confirmation_received'].includes(event.event_type))
+        .map((event) => {
+          const data = event.event_data || {};
+          return {
+            sequence: event.sequence,
+            type: event.event_type,
+            risk: data.riskLevel || data.risk_level || '-',
+            impactScope: data.impactScope || data.impact_scope || '-',
+            rollbackPlan: data.rollbackPlan || data.rollback_plan || '-',
+          };
+        }),
+    [events, playIndex],
+  );
 
   return (
     <div className="h-full flex flex-col">
@@ -130,6 +147,21 @@ export default function HistoryReplay() {
           className="w-full"
         />
         <div className="text-xs text-text-muted mt-1">节点 {Math.min(playIndex + 1, events.length)} / {events.length}</div>
+      </div>
+
+
+      <div className="px-4 py-3 border-b border-border-subtle bg-bg-surface/50">
+        <h2 className="text-sm font-semibold mb-2">确认点信息（风险/影响范围/回滚方案）</h2>
+        <div className="space-y-2 max-h-48 overflow-auto">
+          {confirmationPoints.length === 0 && <div className="text-xs text-text-muted">当前进度暂无确认点</div>}
+          {confirmationPoints.map((point) => (
+            <div key={`${point.sequence}-${point.type}`} className="border rounded p-2 text-xs">
+              <div className="font-medium">#{point.sequence} · {point.type} · 风险 {point.risk}</div>
+              <div>影响范围：{point.impactScope}</div>
+              <div>回滚方案：{point.rollbackPlan}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-3">

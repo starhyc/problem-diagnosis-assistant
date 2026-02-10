@@ -209,6 +209,12 @@ export interface MCPServer {
   version: string;
 }
 
+
+export interface AutomationPolicy {
+  automation_level: 'conservative' | 'balanced' | 'aggressive';
+  risk_thresholds: Record<'R0' | 'R1' | 'R2' | 'R3', number>;
+}
+
 export interface SkillPackage {
   id: string;
   name: string;
@@ -433,6 +439,18 @@ export const knowledgeApi = {
 };
 
 export const settingsApi = {
+
+  async getAutomationPolicy(): Promise<AutomationPolicy> {
+    return request('/settings/automation-policy');
+  },
+
+  async updateAutomationPolicy(payload: AutomationPolicy): Promise<AutomationPolicy> {
+    return request('/settings/automation-policy', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+
   async getLLMProviders(): Promise<any[]> {
     return request('/settings/llm-providers');
   },

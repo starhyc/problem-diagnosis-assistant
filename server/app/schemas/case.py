@@ -197,6 +197,21 @@ class SettingsDataResponse(BaseModel):
     masking_rules: List[MaskingRuleResponse]
 
 
+class AutomationPolicyResponse(BaseModel):
+    automation_level: str = "balanced"
+    risk_thresholds: Dict[str, int] = Field(default_factory=lambda: {
+        "R0": 0,
+        "R1": 1,
+        "R2": 2,
+        "R3": 3,
+    })
+
+
+class AutomationPolicyUpdateRequest(BaseModel):
+    automation_level: Literal["conservative", "balanced", "aggressive"]
+    risk_thresholds: Optional[Dict[Literal["R0", "R1", "R2", "R3"], int]] = None
+
+
 class StartDiagnosisRequest(BaseModel):
     agent_type: str = "diagnosis"
     # 兼容说明：过渡期保留对 prd_* 旧值的解析，并映射到标准模式。

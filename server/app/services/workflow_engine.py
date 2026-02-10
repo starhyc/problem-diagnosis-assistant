@@ -12,12 +12,27 @@ from app.services.agents.metric_agent import MetricAgent
 from app.services.mode_router import DiagnosisMode, normalize_mode
 from app.core.logging_config import get_logger
 from app.core.event_publisher import event_publisher
-from app.core.database import get_db
+from app.core.database import get_db, SessionLocal
 from app.services.state_manager import state_manager
 from app.schemas.events import ConfirmationRiskLevel
 from app.core.redis_client import redis_client
+from app.models.case import Setting
+from app.services.settings_audit import SettingsAuditService
 
 logger = get_logger(__name__)
+
+DEFAULT_AUTOMATION_POLICIES = {
+    "conservative": {"R0": 1, "R1": 2, "R2": 3, "R3": 3},
+    "balanced": {"R0": 0, "R1": 1, "R2": 2, "R3": 3},
+    "aggressive": {"R0": 0, "R1": 0, "R2": 1, "R3": 2},
+}
+
+GATE_DECISIONS = {
+    0: "auto_execute",
+    1: "single_confirmation",
+    2: "double_confirmation",
+    3: "admin_enforced",
+}
 
 
 class DiagnosisState(TypedDict, total=False):
@@ -49,6 +64,7 @@ class DiagnosisWorkflowEngine:
         self.metric_agent = MetricAgent()
         self.active_workflows: Dict[str, Dict[str, Any]] = {}
         self.redis = redis_client.get_client()
+        self.audit_service = SettingsAuditService()
         self.executors = {
             DiagnosisMode.DIRECT.value: self._run_direct,
             DiagnosisMode.PLAN_EXECUTE.value: self._run_plan_execute,
@@ -125,6 +141,73 @@ class DiagnosisWorkflowEngine:
             state_manager.record_event(session_id, event_type, event_data, db)
         except Exception as e:
             logger.error(f"Failed to record audit event for {session_id}: {e}")
+
+    def _load_automation_policy(self) -> Dict[str, Any]:
+        default_policy = {
+            "automation_level": "balanced",
+            "risk_thresholds": DEFAULT_AUTOMATION_POLICIES["balanced"],
+        }
+        try:
+            with SessionLocal() as db:
+                row = (
+                    db.query(Setting)
+                    .filter(Setting.setting_type == "automation_policy", Setting.setting_id == "default")
+                    .first()
+                )
+                if not row or not row.config:
+                    return default_policy
+                payload = json.loads(row.config)
+                automation_level = payload.get("automation_level", "balanced")
+                thresholds = payload.get("risk_thresholds") or DEFAULT_AUTOMATION_POLICIES.get(
+                    automation_level,
+                    DEFAULT_AUTOMATION_POLICIES["balanced"],
+                )
+                return {
+                    "automation_level": automation_level,
+                    "risk_thresholds": thresholds,
+                }
+        except Exception as exc:
+            logger.warning(f"Failed to load automation policy, fallback to default: {exc}")
+            return default_policy
+
+    def _resolve_confirmation_gate(self, risk_level: ConfirmationRiskLevel) -> Dict[str, Any]:
+        policy = self._load_automation_policy()
+        automation_level = policy.get("automation_level", "balanced")
+        thresholds = policy.get("risk_thresholds") or DEFAULT_AUTOMATION_POLICIES.get(
+            automation_level,
+            DEFAULT_AUTOMATION_POLICIES["balanced"],
+        )
+        gate_level = int(thresholds.get(risk_level.value, 3))
+        gate_level = min(max(gate_level, 0), 3)
+
+        decision = GATE_DECISIONS[gate_level]
+        return {
+            "automation_level": automation_level,
+            "risk_level": risk_level.value,
+            "gate_level": gate_level,
+            "decision": decision,
+            "thresholds": thresholds,
+        }
+
+    def _record_high_risk_audit(self, session_id: str, gate: Dict[str, Any], confirmation_data: Dict[str, Any]):
+        risk_level = gate.get("risk_level")
+        if risk_level not in {ConfirmationRiskLevel.R2.value, ConfirmationRiskLevel.R3.value}:
+            return
+
+        self.audit_service.record(
+            module="workflow-confirmation",
+            action="high-risk-gate-evaluated",
+            actor="system",
+            target_id=confirmation_data.get("actionId", "unknown"),
+            detail={
+                "decision": gate.get("decision"),
+                "automation_level": gate.get("automation_level"),
+                "impact_scope": confirmation_data.get("impactScope"),
+                "rollback_plan": confirmation_data.get("rollbackPlan"),
+            },
+            session_id=session_id,
+            risk_level=risk_level,
+        )
 
     def submit_confirmation_response(self, session_id: str, confirmation_id: str, response: Dict[str, Any]) -> bool:
         action_id = response.get("actionId") or response.get("action_id") or confirmation_id
@@ -645,25 +728,42 @@ class DiagnosisWorkflowEngine:
                 ],
                 "defaultOption": "approve",
             }
-            state.setdefault("pending_confirmations", []).append(confirmation_data)
-            first_result = await self._request_confirmation(state, confirmation_data)
-            first_action = first_result.get("response", {}).get("action", "reject")
 
-            if first_result.get("status") == "timeout" or first_action == "reject":
-                state["current_phase"] = "confirmation_rejected"
-                event_publisher.publish_diagnosis_event(session_id, {
-                    "type": "confirmation_rejected",
-                    "action_id": "knowledge_match",
-                    "reason": first_result.get("response", {}).get("reason", "rejected"),
-                })
-                return state
+            gate = self._resolve_confirmation_gate(ConfirmationRiskLevel.R2)
+            self._record_high_risk_audit(session_id, gate, confirmation_data)
+            event_publisher.publish_diagnosis_event(session_id, {
+                "type": "confirmation_gate_decision",
+                "action_id": "knowledge_match",
+                **gate,
+            })
 
-            if first_action == "second_confirm":
-                event_publisher.publish_diagnosis_event(session_id, {
-                    "type": "confirmation_escalated",
-                    "action_id": "knowledge_match",
-                    "risk_level": ConfirmationRiskLevel.R3.value,
-                })
+            if gate["decision"] == "admin_enforced":
+                admin_payload = {
+                    **confirmation_data,
+                    "message": "管理员强制确认：该 R2/R3 操作仅允许管理员审批后执行。",
+                    "riskLevel": ConfirmationRiskLevel.R3.value,
+                    "approverRoles": ["admin"],
+                    "requiresSecondConfirmation": False,
+                }
+                state.setdefault("pending_confirmations", []).append(admin_payload)
+                admin_result = await self._request_confirmation(state, admin_payload)
+                if admin_result.get("status") == "timeout" or admin_result.get("response", {}).get("action") != "approve":
+                    state["current_phase"] = "confirmation_rejected"
+                    return state
+            elif gate["decision"] == "double_confirmation":
+                state.setdefault("pending_confirmations", []).append(confirmation_data)
+                first_result = await self._request_confirmation(state, confirmation_data)
+                first_action = first_result.get("response", {}).get("action", "reject")
+
+                if first_result.get("status") == "timeout" or first_action == "reject":
+                    state["current_phase"] = "confirmation_rejected"
+                    event_publisher.publish_diagnosis_event(session_id, {
+                        "type": "confirmation_rejected",
+                        "action_id": "knowledge_match",
+                        "reason": first_result.get("response", {}).get("reason", "rejected"),
+                    })
+                    return state
+
                 second_result = await self._request_confirmation(state, {
                     **confirmation_data,
                     "message": "R3 二次确认：是否继续执行高风险知识库关联操作？",
@@ -671,6 +771,12 @@ class DiagnosisWorkflowEngine:
                     "timeoutSeconds": 60,
                 })
                 if second_result.get("status") == "timeout" or second_result.get("response", {}).get("action") != "approve":
+                    state["current_phase"] = "confirmation_rejected"
+                    return state
+            elif gate["decision"] == "single_confirmation":
+                state.setdefault("pending_confirmations", []).append(confirmation_data)
+                first_result = await self._request_confirmation(state, confirmation_data)
+                if first_result.get("status") == "timeout" or first_result.get("response", {}).get("action") != "approve":
                     state["current_phase"] = "confirmation_rejected"
                     return state
 

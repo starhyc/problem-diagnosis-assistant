@@ -3,6 +3,7 @@ from typing import List
 import json
 from app.core.logging_config import get_logger
 from app.models.case import Setting
+from app.core.database import SessionLocal
 from app.schemas.case import (
     ToolResponse,
     LLMProviderRequest,
@@ -10,6 +11,8 @@ from app.schemas.case import (
     LLMProviderUpdateRequest,
     TestConnectionResponse,
     ModelListResponse,
+    AutomationPolicyResponse,
+    AutomationPolicyUpdateRequest,
 )
 from app.schemas.llm_config import OpenAIConfig, AnthropicConfig, AzureConfig, CustomConfig
 from app.repositories.setting_repository import SettingRepository
@@ -34,6 +37,92 @@ def log_system_params_change(payload: dict, user: UserResponse = Depends(admin_r
         detail=payload.get("detail", {}),
     )
     return {"status": "ok", "entry": entry}
+
+
+DEFAULT_AUTOMATION_POLICIES = {
+    "conservative": {"R0": 1, "R1": 2, "R2": 3, "R3": 3},
+    "balanced": {"R0": 0, "R1": 1, "R2": 2, "R3": 3},
+    "aggressive": {"R0": 0, "R1": 0, "R2": 1, "R3": 2},
+}
+
+
+def _default_automation_policy() -> dict:
+    return {
+        "automation_level": "balanced",
+        "risk_thresholds": DEFAULT_AUTOMATION_POLICIES["balanced"],
+    }
+
+
+def _load_automation_policy() -> dict:
+    with SessionLocal() as db:
+        row = (
+            db.query(Setting)
+            .filter(Setting.setting_type == "automation_policy", Setting.setting_id == "default")
+            .first()
+        )
+        if not row:
+            payload = _default_automation_policy()
+            row = Setting(
+                setting_type="automation_policy",
+                setting_id="default",
+                name="automation-policy",
+                enabled=True,
+                config=json.dumps(payload, ensure_ascii=False),
+            )
+            db.add(row)
+            db.commit()
+            return payload
+        payload = json.loads(row.config) if row.config else {}
+        if not payload.get("automation_level"):
+            payload = _default_automation_policy()
+        payload.setdefault("risk_thresholds", DEFAULT_AUTOMATION_POLICIES[payload["automation_level"]])
+        return payload
+
+
+
+@router.get("/automation-policy", response_model=AutomationPolicyResponse)
+def get_automation_policy(user: UserResponse = Depends(admin_required)):
+    policy = _load_automation_policy()
+    return AutomationPolicyResponse(**policy)
+
+
+@router.put("/automation-policy", response_model=AutomationPolicyResponse)
+def update_automation_policy(data: AutomationPolicyUpdateRequest, user: UserResponse = Depends(admin_required)):
+    risk_thresholds = data.risk_thresholds or DEFAULT_AUTOMATION_POLICIES[data.automation_level]
+    payload = {
+        "automation_level": data.automation_level,
+        "risk_thresholds": risk_thresholds,
+    }
+
+    with SessionLocal() as db:
+        row = (
+            db.query(Setting)
+            .filter(Setting.setting_type == "automation_policy", Setting.setting_id == "default")
+            .first()
+        )
+        if row:
+            row.config = json.dumps(payload, ensure_ascii=False)
+            row.enabled = True
+        else:
+            db.add(
+                Setting(
+                    setting_type="automation_policy",
+                    setting_id="default",
+                    name="automation-policy",
+                    enabled=True,
+                    config=json.dumps(payload, ensure_ascii=False),
+                )
+            )
+        db.commit()
+
+    audit_service.record(
+        module="system-params",
+        action="automation-policy-update",
+        actor=user.username,
+        target_id="automation-policy",
+        detail=payload,
+    )
+    return AutomationPolicyResponse(**payload)
 
 DEFAULT_TOOLS = [
     {"id": "elk", "name": "ELK Stack", "connected": True, "url": "https://elk.internal:9200"},

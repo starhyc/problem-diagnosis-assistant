@@ -112,6 +112,7 @@ class ActionEvent(BaseEvent):
 
 
 class ConfirmationRiskLevel(str, Enum):
+    R0 = "R0"
     R1 = "R1"
     R2 = "R2"
     R3 = "R3"
@@ -129,8 +130,8 @@ class ConfirmationEvent(BaseEvent):
     action_id: str
     message: str
     risk_level: ConfirmationRiskLevel
-    impact_scope: str
-    rollback_plan: str
+    impact_scope: str = Field(min_length=1)
+    rollback_plan: str = Field(min_length=1)
     approver_roles: List[str] = Field(default_factory=list)
     timeout_seconds: int = 300
     timeout_strategy: str = "auto_reject"

@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.schemas.case import HistoryDetailResponse, HistoryEventResponse, HistoryListItemResponse
 from app.services.state_manager import state_manager
+from app.services.settings_audit import SettingsAuditService
 
 router = APIRouter()
+audit_service = SettingsAuditService()
 
 
 @router.get("", response_model=List[HistoryListItemResponse])
@@ -45,3 +47,15 @@ def replay_history_events(session_id: str, db: Session = Depends(get_db)):
     if not detail:
         raise HTTPException(status_code=404, detail="History session not found")
     return state_manager.get_session_events(session_id, db)
+
+
+@router.get("/{session_id}/settings-audit", response_model=List[dict])
+def get_session_settings_audit(
+    session_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    detail = state_manager.get_session_detail(session_id, db)
+    if not detail:
+        raise HTTPException(status_code=404, detail="History session not found")
+    return audit_service.list_by_session_id(session_id=session_id, limit=limit)
