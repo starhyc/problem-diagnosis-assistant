@@ -193,8 +193,8 @@ class WebSocketService {
     this.ws.send(JSON.stringify(request));
   }
 
-  startDiagnosis(symptom: string, description: string, agentType: string = 'diagnosis', context?: any): void {
-    this.send('start_diagnosis', { agent_type: agentType, symptom, description, context });
+  startDiagnosis(symptom: string, description: string, agentType: string = 'diagnosis', context?: any, mode: string = 'auto'): void {
+    this.send('start_diagnosis', { agent_type: agentType, symptom, description, context, mode });
   }
 
   stopDiagnosis(reason?: string): void {

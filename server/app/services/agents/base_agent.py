@@ -9,18 +9,28 @@ from app.core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+
 class AgentTimeoutError(Exception):
     """Raised when agent execution times out"""
-    pass
+
 
 class BaseAgent(ABC):
-    def __init__(self, agent_type: str, agent_name: str, timeout: int = 300):
+    def __init__(
+        self,
+        agent_type: str,
+        agent_name: str,
+        timeout: int = 300,
+        supported_modes: Optional[List[str]] = None,
+        default_mode: str = "prd_standard",
+    ):
         self.agent_type = agent_type
         self.agent_name = agent_name
         self.timeout = timeout
         self.llm: Optional[BaseChatModel] = None
         self.tools: List[BaseTool] = []
         self.retry_count = 3
+        self.supported_modes = supported_modes or [default_mode]
+        self.default_mode = default_mode
 
     def initialize(self):
         """Initialize agent with LLM and tools"""
@@ -32,13 +42,27 @@ class BaseAgent(ABC):
             logger.error(f"Failed to initialize agent {self.agent_name}: {e}")
             raise
 
-    async def execute_with_timeout(self, task: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, task: str, mode: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Unified agent runtime interface."""
+        execution_mode = mode or self.default_mode
+        if execution_mode not in self.supported_modes:
+            logger.warning(
+                f"{self.agent_name} does not support mode={execution_mode}, "
+                f"fallback to {self.default_mode}"
+            )
+            execution_mode = self.default_mode
+
+        payload = context.copy() if context else {}
+        payload["mode"] = execution_mode
+        return await self.execute(task, payload)
+
+    async def execute_with_timeout(self, task: str, context: Dict[str, Any], mode: Optional[str] = None) -> Dict[str, Any]:
         """Execute agent task with timeout and retry logic"""
         for attempt in range(self.retry_count):
             try:
                 result = await asyncio.wait_for(
-                    self.execute(task, context),
-                    timeout=self.timeout
+                    self.run(task, mode=mode, context=context),
+                    timeout=self.timeout,
                 )
                 return result
             except asyncio.TimeoutError:
@@ -51,11 +75,11 @@ class BaseAgent(ABC):
                     return {
                         "agent": self.agent_name,
                         "result": f"Failed after {self.retry_count} attempts: {str(e)}",
-                        "status": "error"
+                        "status": "error",
                     }
                 await asyncio.sleep(2 ** attempt)
 
     @abstractmethod
     async def execute(self, task: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """Execute agent task"""
-        pass
+        raise NotImplementedError
