@@ -17,9 +17,6 @@ pnpm install --prefer-offline
 # Development server with HMR
 pnpm dev
 
-# Build for development
-pnpm build
-
 # Build for production (disables source identifiers)
 pnpm build:prod
 
@@ -28,9 +25,6 @@ pnpm lint
 
 # Preview production build
 pnpm preview
-
-# Clean dependencies and cache
-pnpm clean
 ```
 
 ### Backend (FastAPI)
@@ -41,13 +35,22 @@ cd server
 # Install dependencies
 pip install -r requirements.txt
 
-# Initialize database (creates tables and default users)
+# Start infrastructure (PostgreSQL + Redis)
+docker-compose up -d postgres redis
+
+# Run database migrations
+psql -U postgres -d aiops -f migrations/001_create_diagnosis_tables.sql
+
+# Initialize database (creates default users)
 python init_db.py
 
 # Start development server
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-# Start production server
+# Start Celery worker (required for diagnosis tasks)
+celery -A app.core.celery_app worker --loglevel=info
+
+# Start production server (4 workers)
 uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
@@ -56,23 +59,60 @@ Default users after `init_db.py`:
 - engineer / engineer123 (工程师)
 - viewer / viewer123 (观察者)
 
+### Production Deployment
+
+```bash
+# Start all services with Docker Compose
+cd server && docker-compose up -d
+
+# Check service health
+curl http://localhost:8000/api/v1/health/db
+curl http://localhost:8000/api/v1/health/redis
+curl http://localhost:8000/api/v1/health/celery
+
+# Monitor Celery tasks
+celery -A app.core.celery_app inspect active
+celery -A app.core.celery_app inspect stats
+
+# View logs
+tail -f server/logs/aiops.log
+docker-compose logs -f celery_worker
+
+# Database rollback (if needed)
+psql -U postgres -d aiops -f migrations/001_rollback.sql
+```
+
+## Critical Production Requirements
+
+**IMPORTANT:** The diagnosis system requires ALL of the following to function:
+1. **PostgreSQL** - State persistence and event sourcing
+2. **Redis** - Session management and Pub/Sub messaging
+3. **Celery Worker** - Background task processing for diagnosis workflows
+4. **LLM API Keys** - At least one provider (Anthropic or OpenAI) configured
+
+Without Celery workers running, diagnosis tasks will queue indefinitely and never execute.
+
 ## OpenSpec Workflow
 
 - Follow the standard OpenSpec flow: exploration → artifacts (proposal, design, specs, tasks) → implementation → archive
 - Sync delta specs to main before archiving changes
 - Mark tasks complete only after testing integration
 
-## Code Quality Checks
+## Code Quality for Commercial Software
 
 - Always verify imports are correct after multi-file changes, especially when moving or renaming modules
 - Run type checking (mypy for Python, tsc for TypeScript) before marking implementation complete
 - Test integration points between backend and frontend after making changes to both
+- Verify WebSocket message flow end-to-end when modifying real-time features
+- Check Celery task execution when modifying diagnosis workflows
+- Test with real LLM providers, not just mocks, before production deployment
 
 ## Change Scope
 
-- Start with minimal changes that directly address the requirement
-- Avoid refactoring unrelated code unless explicitly requested
-- When implementing features, focus on core functionality first, then enhancements
+- Prioritize production stability over feature additions
+- When modifying core workflows (diagnosis, agents, state management), test thoroughly with all components running
+- Database schema changes require migration scripts in `server/migrations/`
+- API changes must maintain backward compatibility or require version bumps
 
 ## Architecture
 
@@ -240,22 +280,72 @@ TypeScript path alias `@/*` maps to `./src/*` (configured in `tsconfig.json` and
 Frontend (`.env`):
 - `VITE_API_BASE_URL` - Backend API URL (default: `http://localhost:8000/api/v1`)
 
-Backend (`server/.env`):
-- `DATABASE_URL` - PostgreSQL connection string (e.g., `postgresql://user:password@host:port/dbname`)
-- `REDIS_URL` - Redis connection string (e.g., `redis://localhost:6379/0`)
-- `SECRET_KEY` - JWT signing key (must be changed in production)
-- `ACCESS_TOKEN_EXPIRE_MINUTES` - Token expiration time
-- `CORS_ORIGINS` - Allowed frontend origins
-- `LOG_LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- `LOG_FILE` - Log file path (default: `logs/aiops.log`)
+Backend (`server/.env`) - **REQUIRED for production**:
+```bash
+# Database (REQUIRED)
+DATABASE_URL=postgresql://user:password@host:port/dbname
 
-**Important:** Database configuration (PostgreSQL and Redis) is managed exclusively through environment variables for security reasons. There is no UI for database configuration. All database connection settings must be configured in `server/.env` before starting the application.
+# Redis (REQUIRED)
+REDIS_URL=redis://localhost:6379/0
+
+# Celery (REQUIRED)
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+CELERY_TASK_TIMEOUT=1800
+
+# LLM Providers (at least one REQUIRED)
+LLM_PRIMARY_PROVIDER=anthropic  # or 'openai'
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+
+# Security (REQUIRED - generate secure random key)
+SECRET_KEY=your-secure-random-key-here
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# CORS (REQUIRED for production)
+CORS_ORIGINS=http://localhost:5173,https://your-domain.com
+
+# Logging
+LOG_LEVEL=INFO  # Use INFO or WARNING in production
+LOG_FILE=logs/aiops.log
+
+# Agent Configuration
+USE_REAL_AGENTS=true  # Set to false for testing without LLM calls
+```
+
+**Critical:** Database configuration (PostgreSQL and Redis) is managed exclusively through environment variables for security. There is no UI for database configuration. All connection settings must be in `server/.env` before starting.
 
 ## Backend API Documentation
 
 When server is running, access interactive API docs:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
+
+## Troubleshooting Production Issues
+
+### Diagnosis Not Starting
+1. Check Celery worker is running: `celery -A app.core.celery_app inspect active`
+2. Verify Redis connection: `curl http://localhost:8000/api/v1/health/redis`
+3. Check LLM API keys are valid in `.env`
+4. Review logs: `tail -f server/logs/aiops.log`
+
+### WebSocket Connection Failures
+1. Verify Redis Pub/Sub is working: `redis-cli PUBSUB CHANNELS`
+2. Check WebSocket endpoint logs for connection errors
+3. Ensure CORS_ORIGINS includes frontend URL
+4. Test WebSocket directly: `wscat -c ws://localhost:8000/api/v1/agent/ws`
+
+### Database Migration Issues
+1. Check current schema: `psql -U postgres -d aiops -c "\dt"`
+2. Verify migration was applied: Check `diagnosis_sessions`, `diagnosis_events`, `agent_executions` tables exist
+3. Rollback if needed: `psql -U postgres -d aiops -f migrations/001_rollback.sql`
+4. Reapply: `psql -U postgres -d aiops -f migrations/001_create_diagnosis_tables.sql`
+
+### Celery Task Stuck
+1. Check task status: `celery -A app.core.celery_app inspect active`
+2. View task details: `celery -A app.core.celery_app inspect stats`
+3. Purge queue if needed: `celery -A app.core.celery_app purge`
+4. Restart worker: `docker-compose restart celery_worker`
 
 ## Logging
 
@@ -264,11 +354,25 @@ The backend uses Python's standard logging module with both console and file out
 Key log locations:
 - Authentication events (login, logout, token validation)
 - WebSocket connections and message flow
-- Diagnosis agent workflow
-- API endpoint access
-- Permission checks
+- Diagnosis agent workflow execution
+- API endpoint access and errors
+- Permission checks and authorization failures
+- LLM API calls and token usage
+- Celery task lifecycle events
 
 View logs in real-time:
 ```bash
-tail -f logs/aiops.log
+tail -f server/logs/aiops.log
+docker-compose logs -f celery_worker
 ```
+
+## Production Monitoring
+
+Key metrics to monitor:
+- Celery task queue length (should be near zero)
+- Task execution time (diagnosis tasks: 30s-5min typical)
+- Redis memory usage (monitor for memory leaks)
+- PostgreSQL connection pool utilization
+- WebSocket connection count
+- LLM API latency and error rates
+- Event sourcing table growth rate
