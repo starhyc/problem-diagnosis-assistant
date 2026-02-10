@@ -140,7 +140,7 @@ def get_investigation_data():
 @router.post("/start")
 def start_diagnosis(request: StartDiagnosisRequest):
     session_id = str(uuid.uuid4())
-    mode = request.mode if hasattr(request, 'mode') else "prd_standard"
+    mode = request.mode if hasattr(request, 'mode') else "auto"
 
     logger.info(f"Starting diagnosis: session_id={session_id}, problem={request.problem_description}")
 

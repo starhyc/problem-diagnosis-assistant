@@ -24,7 +24,7 @@ class BaseAgent(ABC):
         agent_name: str,
         timeout: int = 300,
         supported_modes: Optional[List[str]] = None,
-        default_mode: str = "prd_standard",
+        default_mode: str = "plan_execute",
     ):
         self.agent_type = agent_type
         self.agent_name = agent_name

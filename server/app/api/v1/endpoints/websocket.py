@@ -142,7 +142,7 @@ async def send_error(session_id: str, error_message: str):
 
 async def start_diagnosis(session_id: str, data: dict):
     symptom = data.get("symptom", "")
-    mode = data.get("mode", "prd_standard")
+    mode = data.get("mode", "auto")
     user_id = data.get("user_id", "anonymous")
 
     logger.info(f"Starting diagnosis [{session_id}]: symptom={symptom}, mode={mode}")

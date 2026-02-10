@@ -5,7 +5,7 @@ from app.core.database import get_db
 from app.services.workflow_engine import workflow_engine, DiagnosisState
 from app.services.state_manager import state_manager
 from app.core.event_publisher import event_publisher
-from app.services.mode_router import mode_router, DiagnosisMode, TaskFeatures
+from app.services.mode_router import mode_router, DiagnosisMode, TaskFeatures, normalize_mode
 from typing import Dict, Any, Optional
 import asyncio
 
@@ -26,18 +26,21 @@ class DiagnosisTask(Task):
 
 def _normalize_mode(mode: Optional[str]) -> str:
     if not mode:
-        return DiagnosisMode.PRD_STANDARD.value
+        return "auto"
 
     mode_alias = {
-        "simple": DiagnosisMode.PRD_MINIMAL.value,
-        "complex": DiagnosisMode.PRD_DEEP.value,
+        "simple": DiagnosisMode.DIRECT.value,
+        "complex": DiagnosisMode.REACT.value,
         "auto": "auto",
     }
-    return mode_alias.get(mode, mode)
+    normalized = normalize_mode(mode)
+    if not normalized:
+        return "auto"
+    return mode_alias.get(normalized, normalized)
 
 
 @celery_app.task(bind=True, base=DiagnosisTask, max_retries=3)
-def run_diagnosis(self, session_id: str, symptom: str, mode: str = DiagnosisMode.PRD_STANDARD.value, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run diagnosis workflow as Celery task"""
     logger.info(f"Starting diagnosis task for session: {session_id}")
 
@@ -48,18 +51,25 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = DiagnosisMode
         context = context or {}
         decision_trace = []
 
-        if normalized_mode == "auto":
+        explicit_mode = normalized_mode if normalized_mode != "auto" else None
+
+        if explicit_mode:
+            selected_mode = explicit_mode
+            decision_trace.append({"stage": "explicit_specified", "mode": selected_mode})
+        else:
             features = TaskFeatures(
                 step_complexity=context.get("step_complexity", 4),
                 cross_domain_count=context.get("cross_domain_count", 1),
                 uncertainty=context.get("uncertainty", 3),
             )
             recommendation = mode_router.recommend_mode(features)
-            selected_mode = recommendation["mode"]
-            decision_trace.append({"stage": "auto_recommend", **recommendation})
-        else:
-            selected_mode = normalized_mode
-            decision_trace.append({"stage": "manual_or_default", "mode": selected_mode})
+            recommended_mode = recommendation.get("mode")
+            if recommended_mode:
+                selected_mode = recommended_mode
+                decision_trace.append({"stage": "router_recommend", **recommendation})
+            else:
+                selected_mode = DiagnosisMode.PLAN_EXECUTE.value
+                decision_trace.append({"stage": "default", "mode": selected_mode})
 
         event_publisher.publish_diagnosis_event(session_id, {
             "type": "diagnosis_started",
@@ -85,7 +95,7 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = DiagnosisMode
             "paused": False,
             "cancelled": False,
             "pending_confirmations": [],
-            "audit_logs": []
+            "audit_logs": [],
             "mode": selected_mode,
             "mode_history": decision_trace.copy(),
         }

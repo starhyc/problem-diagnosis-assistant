@@ -2,7 +2,7 @@ from app.services.executors.base_executor import BaseWorkflowExecutor, Diagnosis
 
 
 class SwarmExecutor(BaseWorkflowExecutor):
-    mode = "prd_swarm"
+    mode = "hierarchical"
 
     async def run(self, engine, state: DiagnosisState) -> DiagnosisState:
-        return await engine._run_swarm(state)
+        return await engine._run_hierarchical(state)

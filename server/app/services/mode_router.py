@@ -4,10 +4,25 @@ from typing import Dict, Any, List
 
 
 class DiagnosisMode(str, Enum):
-    PRD_MINIMAL = "prd_minimal"
-    PRD_STANDARD = "prd_standard"
-    PRD_DEEP = "prd_deep"
-    PRD_SWARM = "prd_swarm"
+    DIRECT = "direct"
+    PLAN_EXECUTE = "plan_execute"
+    REACT = "react"
+    HIERARCHICAL = "hierarchical"
+
+
+LEGACY_MODE_MAP: Dict[str, str] = {
+    "prd_minimal": DiagnosisMode.DIRECT.value,
+    "prd_standard": DiagnosisMode.PLAN_EXECUTE.value,
+    "prd_deep": DiagnosisMode.REACT.value,
+    "prd_swarm": DiagnosisMode.HIERARCHICAL.value,
+}
+
+
+def normalize_mode(mode: str | None) -> str | None:
+    if mode is None:
+        return None
+    normalized = mode.strip().lower()
+    return LEGACY_MODE_MAP.get(normalized, normalized)
 
 
 @dataclass
@@ -44,13 +59,13 @@ class ModeRouter:
             reasons.append("存在一定不确定性")
 
         if score >= 7.5:
-            mode = DiagnosisMode.PRD_SWARM
+            mode = DiagnosisMode.HIERARCHICAL
         elif score >= 6.0:
-            mode = DiagnosisMode.PRD_DEEP
+            mode = DiagnosisMode.REACT
         elif score >= 3.5:
-            mode = DiagnosisMode.PRD_STANDARD
+            mode = DiagnosisMode.PLAN_EXECUTE
         else:
-            mode = DiagnosisMode.PRD_MINIMAL
+            mode = DiagnosisMode.DIRECT
 
         if not reasons:
             reasons.append("任务特征整体简单")
