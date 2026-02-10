@@ -26,46 +26,56 @@ function CollapsibleSection({ title, children, defaultExpanded = true, sectionKe
 
   return (
     <div className="border border-border-subtle rounded-lg bg-bg-surface">
-      <button
-        onClick={toggleExpanded}
-        className="w-full flex items-center justify-between p-4 hover:bg-bg-elevated/30 transition-colors"
-      >
+      <button onClick={toggleExpanded} className="w-full flex items-center justify-between p-4 hover:bg-bg-elevated/30 transition-colors">
         <h2 className="text-lg font-semibold text-text-main">{title}</h2>
-        {isExpanded ? (
-          <ChevronDown className="w-5 h-5 text-text-muted" />
-        ) : (
-          <ChevronRight className="w-5 h-5 text-text-muted" />
-        )}
+        {isExpanded ? <ChevronDown className="w-5 h-5 text-text-muted" /> : <ChevronRight className="w-5 h-5 text-text-muted" />}
       </button>
-      {isExpanded && (
-        <div className="p-4 pt-0">
-          {children}
+      {isExpanded && <div className="p-4 pt-0 space-y-3">{children}</div>}
+    </div>
+  );
+}
+
+function ModuleAudit({ module }: { module: string }) {
+  const { moduleAuditLogs, moduleRecentChanges, loadModuleAuditLogs, loadModuleRecentChanges } = useSettingsStore();
+
+  useEffect(() => {
+    loadModuleAuditLogs(module);
+    loadModuleRecentChanges(module);
+  }, [module]);
+
+  const logs = moduleAuditLogs[module] || [];
+  const changes = moduleRecentChanges[module] || [];
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div className="border rounded p-2">
+        <div className="text-sm font-medium mb-2">最近变更</div>
+        <div className="space-y-1 text-xs">
+          {changes.slice(0, 5).map(c => <div key={c.id}>{c.action} · {c.target_id}</div>)}
         </div>
-      )}
+      </div>
+      <div className="border rounded p-2">
+        <div className="text-sm font-medium mb-2">操作日志</div>
+        <div className="space-y-1 text-xs max-h-36 overflow-auto">
+          {logs.slice(0, 10).map(l => <div key={l.id}>{l.actor} · {l.action}</div>)}
+        </div>
+      </div>
     </div>
   );
 }
 
 export default function Settings() {
   const {
-    loadLLMProviders,
-    loadTools,
-    loadMCPServers,
-    saveMCPServer,
-    toggleMCPServer,
-    testMCPServer,
-    loadSkills,
-    uploadSkill,
-    toggleSkill,
-    executeSkill,
-    mcpServers,
-    skills,
-    loading,
-    error,
+    loadLLMProviders, loadTools, loadMCPServers, saveMCPServer, toggleMCPServer, testMCPServer,
+    loadSkills, uploadSkill, toggleSkill, executeSkill, testSkill,
+    loadUsers, createUser, updateUserRole, updateUserStatus,
+    logSystemParamsChange,
+    mcpServers, skills, users, loading, error,
   } = useSettingsStore();
   const { user } = useAuthStore();
 
   const [newMcp, setNewMcp] = useState({ id: '', name: '', transport: 'http', endpoint: '', enabled: true, version: 'latest' });
+  const [newUser, setNewUser] = useState({ username: '', email: '', password: '', display_name: '', role: 'viewer' });
 
   useEffect(() => {
     if (user?.role !== 'admin') {
@@ -76,118 +86,64 @@ export default function Settings() {
     loadTools();
     loadMCPServers();
     loadSkills();
+    loadUsers();
   }, [user]);
 
-  if (user?.role !== 'admin') {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-text-muted">权限不足</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin w-12 h-12 mx-auto mb-4 border-4 border-primary border-t-transparent rounded-full" />
-          <p className="text-text-muted">加载中...</p>
-        </div>
-      </div>
-    );
-  }
+  if (user?.role !== 'admin') return <div className="h-full flex items-center justify-center"><p className="text-text-muted">权限不足</p></div>;
+  if (loading) return <div className="h-full flex items-center justify-center"><p className="text-text-muted">加载中...</p></div>;
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-text-main">设置</h1>
-      </div>
+      <h1 className="text-2xl font-bold text-text-main">设置中心</h1>
+      {error && <div className="p-4 bg-semantic-danger/10 border border-semantic-danger/30 rounded-lg text-sm">{error}</div>}
 
-      {error && (
-        <div className="mb-6 p-4 bg-semantic-danger/10 border border-semantic-danger/30 rounded-lg">
-          <p className="text-semantic-danger font-medium mb-1">⚠️ 错误</p>
-          <p className="text-sm text-text-muted">{error}</p>
+      <CollapsibleSection title="用户管理" sectionKey="users">
+        <div className="grid grid-cols-6 gap-2">
+          <input className="border rounded px-2 py-1" placeholder="用户名" value={newUser.username} onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} />
+          <input className="border rounded px-2 py-1" placeholder="邮箱" value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} />
+          <input className="border rounded px-2 py-1" placeholder="显示名" value={newUser.display_name} onChange={(e) => setNewUser({ ...newUser, display_name: e.target.value })} />
+          <input className="border rounded px-2 py-1" placeholder="密码" type="password" value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} />
+          <select className="border rounded px-2 py-1" value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}><option>viewer</option><option>operator</option><option>admin</option></select>
+          <button className="border rounded px-2 py-1" onClick={async () => { await createUser(newUser); setNewUser({ username: '', email: '', password: '', display_name: '', role: 'viewer' }); }}>创建用户</button>
         </div>
-      )}
-
-      <div className="space-y-4">
-        <CollapsibleSection title="LLM 提供商" sectionKey="llm-providers" defaultExpanded={true}>
-          <LLMProviderList />
-        </CollapsibleSection>
-
-        <CollapsibleSection title="外部工具" sectionKey="external-tools" defaultExpanded={true}>
-          <ToolList />
-        </CollapsibleSection>
-
-        <CollapsibleSection title="MCP 管理" sectionKey="mcp-management" defaultExpanded={true}>
-          <div className="space-y-3">
-            <div className="grid grid-cols-6 gap-2">
-              <input className="col-span-1 border rounded px-2 py-1" placeholder="ID" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} />
-              <input className="col-span-1 border rounded px-2 py-1" placeholder="名称" value={newMcp.name} onChange={(e) => setNewMcp({ ...newMcp, name: e.target.value })} />
-              <input className="col-span-1 border rounded px-2 py-1" placeholder="传输" value={newMcp.transport} onChange={(e) => setNewMcp({ ...newMcp, transport: e.target.value })} />
-              <input className="col-span-2 border rounded px-2 py-1" placeholder="Endpoint" value={newMcp.endpoint} onChange={(e) => setNewMcp({ ...newMcp, endpoint: e.target.value })} />
-              <button className="border rounded px-2 py-1" onClick={() => saveMCPServer(newMcp)}>保存</button>
+        {users.map(u => (
+          <div key={u.id} className="border rounded p-2 flex justify-between items-center">
+            <div>{u.username} · {u.role} · {u.is_active ? '启用' : '禁用'}</div>
+            <div className="flex gap-2">
+              <button className="border rounded px-2" onClick={() => updateUserStatus(u.id, !u.is_active)}>{u.is_active ? '禁用' : '启用'}</button>
+              <select className="border rounded px-2" value={u.role} onChange={(e) => updateUserRole(u.id, e.target.value)}><option>viewer</option><option>operator</option><option>admin</option></select>
             </div>
-
-            {mcpServers.map((server) => (
-              <div key={server.id} className="flex items-center justify-between border rounded p-3">
-                <div>
-                  <div className="font-medium">{server.name} ({server.version})</div>
-                  <div className="text-xs text-text-muted">{server.transport} · {server.endpoint}</div>
-                </div>
-                <div className="flex gap-2">
-                  <button className="border rounded px-2 py-1" onClick={() => toggleMCPServer(server.id, !server.enabled)}>{server.enabled ? '停用' : '启用'}</button>
-                  <button className="border rounded px-2 py-1" onClick={async () => {
-                    const result = await testMCPServer(server.id);
-                    alert(result.success ? '连接成功' : `连接失败: ${result.message}`);
-                  }}>测试连接</button>
-                </div>
-              </div>
-            ))}
           </div>
-        </CollapsibleSection>
+        ))}
+        <ModuleAudit module="user-management" />
+      </CollapsibleSection>
 
-        <CollapsibleSection title="Skill 管理" sectionKey="skill-management" defaultExpanded={true}>
-          <div className="space-y-3">
-            <input
-              type="file"
-              accept=".zip,.tar,.tgz,.tar.gz"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                await uploadSkill(file);
-                alert('Skill 上传成功');
-              }}
-            />
+      <CollapsibleSection title="LLM 配置" sectionKey="llm"><LLMProviderList /><ModuleAudit module="llm" /></CollapsibleSection>
 
-            {skills.map((skill) => (
-              <div key={skill.id} className="flex items-center justify-between border rounded p-3">
-                <div>
-                  <div className="font-medium">{skill.name} ({skill.version})</div>
-                  <div className="text-xs text-text-muted">{skill.id} · {skill.entrypoint}</div>
-                </div>
-                <div className="flex gap-2">
-                  <button className="border rounded px-2 py-1" onClick={() => toggleSkill(skill.id, !skill.enabled)}>{skill.enabled ? '停用' : '启用'}</button>
-                  <button className="border rounded px-2 py-1" onClick={async () => {
-                    const result = await executeSkill(skill.id, false);
-                    if (result.status === 'approval_required') {
-                      const ok = confirm('此 Skill 需要权限审批，是否授权执行？');
-                      if (ok) {
-                        const rerun = await executeSkill(skill.id, true);
-                        alert(rerun.returncode === 0 ? '执行成功' : `执行失败: ${rerun.stderr || rerun.stdout}`);
-                      }
-                    } else {
-                      alert(result.returncode === 0 ? '执行成功' : `执行失败: ${result.stderr || result.stdout}`);
-                    }
-                  }}>沙盒测试</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </CollapsibleSection>
-      </div>
+      <CollapsibleSection title="MCP 配置" sectionKey="mcp">
+        <div className="grid grid-cols-6 gap-2">
+          <input className="col-span-1 border rounded px-2 py-1" placeholder="ID" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} />
+          <input className="col-span-1 border rounded px-2 py-1" placeholder="名称" value={newMcp.name} onChange={(e) => setNewMcp({ ...newMcp, name: e.target.value })} />
+          <input className="col-span-1 border rounded px-2 py-1" placeholder="传输" value={newMcp.transport} onChange={(e) => setNewMcp({ ...newMcp, transport: e.target.value })} />
+          <input className="col-span-2 border rounded px-2 py-1" placeholder="Endpoint" value={newMcp.endpoint} onChange={(e) => setNewMcp({ ...newMcp, endpoint: e.target.value })} />
+          <button className="border rounded px-2 py-1" onClick={() => saveMCPServer(newMcp)}>保存</button>
+        </div>
+        {mcpServers.map((server) => <div key={server.id} className="border rounded p-2 flex justify-between"><div>{server.name} · {server.status} · {server.last_test_status || '未测试'}</div><div className="flex gap-2"><button className="border rounded px-2" onClick={() => toggleMCPServer(server.id, !server.enabled)}>{server.enabled ? '停用' : '启用'}</button><button className="border rounded px-2" onClick={async () => alert((await testMCPServer(server.id)).message)}>测试连接</button></div></div>)}
+        <ModuleAudit module="mcp" />
+      </CollapsibleSection>
+
+      <CollapsibleSection title="Skill 配置" sectionKey="skills">
+        <input type="file" accept=".zip,.tar,.tgz,.tar.gz" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; await uploadSkill(file); }} />
+        {skills.map((skill) => <div key={skill.id} className="border rounded p-2 flex justify-between"><div>{skill.name} · {skill.status} · {skill.last_test_status || '未测试'}</div><div className="flex gap-2"><button className="border rounded px-2" onClick={() => toggleSkill(skill.id, !skill.enabled)}>{skill.enabled ? '停用' : '启用'}</button><button className="border rounded px-2" onClick={async () => alert((await testSkill(skill.id)).message)}>连通性测试</button><button className="border rounded px-2" onClick={() => executeSkill(skill.id, false)}>沙盒测试</button></div></div>)}
+        <ModuleAudit module="skill" />
+      </CollapsibleSection>
+
+      <CollapsibleSection title="外部工具" sectionKey="tools"><ToolList /><ModuleAudit module="external-tools" /></CollapsibleSection>
+
+      <CollapsibleSection title="系统参数" sectionKey="system-params">
+        <button className="border rounded px-3 py-1" onClick={() => logSystemParamsChange('update-threshold', { key: 'risk_threshold', value: 0.8 })}>记录系统参数变更示例</button>
+        <ModuleAudit module="system-params" />
+      </CollapsibleSection>
     </div>
   );
 }

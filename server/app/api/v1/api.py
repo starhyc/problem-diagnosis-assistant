@@ -6,8 +6,10 @@ from app.api.v1.endpoints import (
     history,
     knowledge,
     mcp_settings,
+    settings_audit,
     settings,
     skills,
+    user_management,
     websocket,
 )
 
@@ -20,4 +22,6 @@ api_router.include_router(knowledge.router, prefix="/knowledge", tags=["Knowledg
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
 api_router.include_router(mcp_settings.router, prefix="/settings", tags=["MCP Settings"])
 api_router.include_router(skills.router, prefix="/settings/skills", tags=["Skills"])
+api_router.include_router(settings_audit.router, prefix="/settings", tags=["Settings Audit"])
+api_router.include_router(user_management.router, prefix="/settings", tags=["User Management"])
 api_router.include_router(websocket.router, tags=["WebSocket"])

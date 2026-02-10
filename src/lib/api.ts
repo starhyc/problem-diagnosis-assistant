@@ -531,6 +531,52 @@ export const settingsApi = {
       body: JSON.stringify({ approval_granted: approvalGranted }),
     });
   },
+
+  async testSkill(id: string): Promise<any> {
+    return request(`/settings/skills/${id}/test`, {
+      method: 'POST',
+    });
+  },
+
+  async getUsers(): Promise<any[]> {
+    return request('/settings/users');
+  },
+
+  async createUser(payload: { username: string; email: string; password: string; display_name: string; role: string }): Promise<any> {
+    return request('/settings/users', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateUserStatus(userId: number, isActive: boolean): Promise<any> {
+    return request(`/settings/users/${userId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ is_active: isActive }),
+    });
+  },
+
+  async updateUserRole(userId: number, role: string): Promise<any> {
+    return request(`/settings/users/${userId}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role }),
+    });
+  },
+
+  async getModuleAuditLogs(module: string, limit: number = 20): Promise<any[]> {
+    return request(`/settings/modules/${module}/audit-logs?limit=${limit}`);
+  },
+
+  async getModuleRecentChanges(module: string, limit: number = 5): Promise<any[]> {
+    return request(`/settings/modules/${module}/recent-changes?limit=${limit}`);
+  },
+
+  async logSystemParamsChange(action: string, detail: Record<string, any>): Promise<any> {
+    return request('/settings/system-params/log', {
+      method: 'POST',
+      body: JSON.stringify({ action, detail }),
+    });
+  },
 };
 
 export { ApiError };
