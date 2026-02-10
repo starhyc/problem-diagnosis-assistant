@@ -69,7 +69,7 @@ export default function Settings() {
     loadLLMProviders, loadTools, loadMCPServers, saveMCPServer, toggleMCPServer, testMCPServer,
     loadSkills, uploadSkill, toggleSkill, executeSkill, testSkill,
     loadUsers, createUser, updateUserRole, updateUserStatus,
-    logSystemParamsChange,
+    logSystemParamsChange, loadAutomationPolicy, updateAutomationPolicy, automationPolicy,
     mcpServers, skills, users, loading, error,
   } = useSettingsStore();
   const { user } = useAuthStore();
@@ -87,6 +87,7 @@ export default function Settings() {
     loadMCPServers();
     loadSkills();
     loadUsers();
+    loadAutomationPolicy();
   }, [user]);
 
   if (user?.role !== 'admin') return <div className="h-full flex items-center justify-center"><p className="text-text-muted">权限不足</p></div>;
@@ -139,6 +140,45 @@ export default function Settings() {
       </CollapsibleSection>
 
       <CollapsibleSection title="外部工具" sectionKey="tools"><ToolList /><ModuleAudit module="external-tools" /></CollapsibleSection>
+
+
+      <CollapsibleSection title="自动化级别" sectionKey="automation-level">
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <label className="text-sm">自动化级别</label>
+            <select
+              className="border rounded px-2 py-1"
+              value={automationPolicy.automation_level}
+              onChange={async (e) => {
+                const level = e.target.value as 'conservative' | 'balanced' | 'aggressive';
+                const defaults = {
+                  conservative: { R0: 1, R1: 2, R2: 3, R3: 3 },
+                  balanced: { R0: 0, R1: 1, R2: 2, R3: 3 },
+                  aggressive: { R0: 0, R1: 0, R2: 1, R3: 2 },
+                };
+                await updateAutomationPolicy({
+                  automation_level: level,
+                  risk_thresholds: defaults[level],
+                });
+              }}
+            >
+              <option value="conservative">conservative</option>
+              <option value="balanced">balanced</option>
+              <option value="aggressive">aggressive</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2 text-xs">
+            {(['R0', 'R1', 'R2', 'R3'] as const).map((risk) => (
+              <div key={risk} className="border rounded p-2">
+                <div className="font-semibold">{risk}</div>
+                <div>阈值: {automationPolicy.risk_thresholds[risk]}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <ModuleAudit module="system-params" />
+      </CollapsibleSection>
 
       <CollapsibleSection title="系统参数" sectionKey="system-params">
         <button className="border rounded px-3 py-1" onClick={() => logSystemParamsChange('update-threshold', { key: 'risk_threshold', value: 0.8 })}>记录系统参数变更示例</button>

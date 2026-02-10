@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AuditEntry, LLMProvider, MCPServer, ManagedUser, SkillPackage, TestResult, Tool } from '@/types/settings';
+import { AuditEntry, AutomationPolicy, LLMProvider, MCPServer, ManagedUser, SkillPackage, TestResult, Tool } from '@/types/settings';
 type LLMProviderPayload = {
   name: string;
   provider: string;
@@ -19,6 +19,7 @@ interface SettingsState {
   skills: SkillPackage[];
   users: ManagedUser[];
   moduleAuditLogs: Record<string, AuditEntry[]>;
+  automationPolicy: AutomationPolicy;
   moduleRecentChanges: Record<string, AuditEntry[]>;
   loading: boolean;
   error: string | null;
@@ -53,6 +54,8 @@ interface SettingsState {
   loadModuleAuditLogs: (module: string) => Promise<void>;
   loadModuleRecentChanges: (module: string) => Promise<void>;
   logSystemParamsChange: (action: string, detail: Record<string, any>) => Promise<void>;
+  loadAutomationPolicy: () => Promise<void>;
+  updateAutomationPolicy: (policy: AutomationPolicy) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -62,6 +65,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   skills: [],
   users: [],
   moduleAuditLogs: {},
+  automationPolicy: {
+    automation_level: "balanced",
+    risk_thresholds: { R0: 0, R1: 1, R2: 2, R3: 3 },
+  },
   moduleRecentChanges: {},
   loading: false,
   error: null,
@@ -235,5 +242,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   logSystemParamsChange: async (action, detail) => {
     await settingsApi.logSystemParamsChange(action, detail);
+  },
+
+  loadAutomationPolicy: async () => {
+    const automationPolicy = await settingsApi.getAutomationPolicy();
+    set({ automationPolicy });
+  },
+
+  updateAutomationPolicy: async (policy) => {
+    const automationPolicy = await settingsApi.updateAutomationPolicy(policy);
+    set({ automationPolicy });
   },
 }));

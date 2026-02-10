@@ -80,3 +80,9 @@ export interface SettingsData {
   mcpServers: MCPServer[];
   skills: SkillPackage[];
 }
+
+
+export interface AutomationPolicy {
+  automation_level: "conservative" | "balanced" | "aggressive";
+  risk_thresholds: Record<"R0" | "R1" | "R2" | "R3", number>;
+}
