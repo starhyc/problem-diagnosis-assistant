@@ -141,6 +141,7 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", conte
             "audit_logs": [],
             "mode": selected_mode,
             "mode_history": decision_trace.copy(),
+            "final_effective_mode": selected_mode,
         }
 
         self.update_state(state='PROGRESS', meta={'progress': 50, 'phase': f'{selected_mode}_workflow'})
@@ -184,7 +185,7 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", conte
             "type": "diagnosis_completed",
             "session_id": session_id,
             "confidence": result.get("confidence", 0),
-            "mode": result.get("mode", selected_mode),
+            "mode": result.get("final_effective_mode", result.get("mode", selected_mode)),
             "mode_decision": result.get("mode_history", decision_trace),
         })
 
@@ -192,7 +193,7 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", conte
         return {
             "status": "completed",
             "session_id": session_id,
-            "mode": result.get("mode", selected_mode),
+            "mode": result.get("final_effective_mode", result.get("mode", selected_mode)),
             "mode_decision": result.get("mode_history", decision_trace),
             "result": result,
         }

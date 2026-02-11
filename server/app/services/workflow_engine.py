@@ -50,6 +50,7 @@ class DiagnosisState(TypedDict, total=False):
     audit_logs: List[Dict[str, Any]]
     mode: str
     mode_history: List[Dict[str, Any]]
+    final_effective_mode: str
     trace_root_id: str
     task_status: str
     snapshot_data: Dict[str, Any]
@@ -383,17 +384,37 @@ class DiagnosisWorkflowEngine:
         return False
 
     async def run(self, mode: str, state: DiagnosisState) -> DiagnosisState:
-        selected_mode = normalize_mode(mode) or DiagnosisMode.PLAN_EXECUTE.value
-        if selected_mode not in self.executors:
+        normalized_mode = normalize_mode(mode)
+        requested_mode = normalized_mode or DiagnosisMode.PLAN_EXECUTE.value
+
+        if normalized_mode is None:
             selected_mode = DiagnosisMode.PLAN_EXECUTE.value
+            selection_reason = "mode_missing_defaulted"
+        elif normalized_mode not in self.executors:
+            selected_mode = DiagnosisMode.PLAN_EXECUTE.value
+            selection_reason = f"unsupported_mode:{normalized_mode}"
+        else:
+            selected_mode = normalized_mode
+            selection_reason = "workflow_entry"
+
         state.setdefault("mode_history", [])
         state["mode"] = selected_mode
         state["mode_history"].append(
             {
                 "stage": "workflow_selected",
+                "requested_mode": requested_mode,
                 "mode": selected_mode,
-                "reason": "workflow_entry",
+                "reason": selection_reason,
             }
+        )
+        self._record_audit_event(
+            state.get("session_id", "unknown"),
+            "workflow_mode_selected",
+            {
+                "requested_mode": requested_mode,
+                "effective_mode": selected_mode,
+                "reason": selection_reason,
+            },
         )
         state.setdefault("trace_root_id", str(uuid.uuid4()))
         state.setdefault("task_status", "submitted")
@@ -408,7 +429,6 @@ class DiagnosisWorkflowEngine:
             elif result.get("task_status") != "waiting_user":
                 self._set_task_status(result, "completed")
                 result["current_phase"] = "completed"
-            return result
         except Exception as exc:
             logger.warning(f"Mode execution failed in {selected_mode}: {exc}")
             fallback_mode = self._fallback_mode(selected_mode)
@@ -445,7 +465,28 @@ class DiagnosisWorkflowEngine:
             else:
                 self._set_task_status(result, "completed")
                 result["current_phase"] = "completed"
-            return result
+
+        final_effective_mode = result.get("mode", state.get("mode", selected_mode))
+        result["final_effective_mode"] = final_effective_mode
+        result.setdefault("mode_history", state.get("mode_history", []))
+        result["mode_history"].append(
+            {
+                "stage": "workflow_finalized",
+                "requested_mode": requested_mode,
+                "effective_mode": final_effective_mode,
+            }
+        )
+        self._record_audit_event(
+            state.get("session_id", "unknown"),
+            "workflow_mode_finalized",
+            {
+                "requested_mode": requested_mode,
+                "effective_mode": final_effective_mode,
+                "mode_history": result.get("mode_history", []),
+            },
+        )
+        return result
+
 
     def switch_mode(self, session_id: str, mode: str, reason: str) -> bool:
         if session_id not in self.active_workflows or mode not in self.executors:

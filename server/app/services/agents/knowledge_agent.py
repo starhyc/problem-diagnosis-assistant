@@ -26,7 +26,7 @@ Provide your knowledge-based recommendations."""
 
 class KnowledgeAgent(BaseAgent):
     def __init__(self):
-        super().__init__("knowledge", "Knowledge Agent")
+        super().__init__("knowledge", "Knowledge Agent", supported_modes=["plan_execute", "react", "hierarchical"], default_mode="plan_execute")
 
     @property
     def required_tool_name(self) -> str:

@@ -25,6 +25,7 @@ ALLOWED_EVENT_TYPES: Final[set[str]] = {
     "agent_trace_start",
     "agent_trace_step",
     "agent_trace_complete",
+    "mode_mismatch",
     "task_failed",
     "workflow_mode_degraded",
     "mode_router_decision",

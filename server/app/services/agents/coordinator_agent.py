@@ -26,7 +26,7 @@ Provide your analysis and next steps."""
 
 class CoordinatorAgent(BaseAgent):
     def __init__(self):
-        super().__init__("coordinator", "Coordinator Agent")
+        super().__init__("coordinator", "Coordinator Agent", supported_modes=["direct", "plan_execute", "react", "hierarchical"], default_mode="plan_execute")
 
     @property
     def required_tool_name(self) -> str:

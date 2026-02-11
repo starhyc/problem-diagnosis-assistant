@@ -26,7 +26,7 @@ Provide your code analysis findings."""
 
 class CodeAgent(BaseAgent):
     def __init__(self):
-        super().__init__("code", "Code Analysis Agent")
+        super().__init__("code", "Code Analysis Agent", supported_modes=["plan_execute", "react", "hierarchical"], default_mode="plan_execute")
 
     @property
     def required_tool_name(self) -> str:

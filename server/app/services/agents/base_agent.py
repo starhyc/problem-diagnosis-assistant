@@ -37,7 +37,17 @@ class BaseAgent(ABC):
         self.llm: Optional[BaseChatModel] = None
         self.tools: List[BaseTool] = []
         self.retry_count = 3
-        self.supported_modes = supported_modes or [default_mode]
+        if not supported_modes:
+            raise ValueError(f"{agent_name} must explicitly declare supported_modes")
+
+        declared_modes = list(dict.fromkeys(supported_modes))
+        unsupported_modes = [mode for mode in declared_modes if mode not in {"direct", "plan_execute", "react", "hierarchical"}]
+        if unsupported_modes:
+            raise ValueError(f"{agent_name} declares unsupported modes: {unsupported_modes}")
+        if default_mode not in declared_modes:
+            raise ValueError(f"{agent_name} default_mode={default_mode} must be included in supported_modes")
+
+        self.supported_modes = declared_modes
         self.default_mode = default_mode
         self.mode_executors = {
             "direct": DirectExecutor(),
@@ -138,21 +148,40 @@ class BaseAgent(ABC):
 
     async def run(self, task: str, mode: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Unified agent runtime interface."""
-        execution_mode = mode or self.default_mode
+        requested_mode = mode or (context.get("mode") if context else None) or self.default_mode
+        execution_mode = requested_mode
+        mode_mismatch = None
         if execution_mode not in self.supported_modes:
+            mismatch_reason = f"unsupported_mode_for_agent:{self.agent_name}"
             logger.warning(
                 f"{self.agent_name} does not support mode={execution_mode}, "
                 f"fallback to {self.default_mode}"
             )
+            mode_mismatch = {
+                "requested_mode": execution_mode,
+                "fallback_mode": self.default_mode,
+                "reason": mismatch_reason,
+            }
             execution_mode = self.default_mode
 
         payload = context.copy() if context else {}
+        payload["requested_mode"] = requested_mode
         payload["mode"] = execution_mode
         executor = self.mode_executors.get(execution_mode)
         if not executor:
             logger.warning(f"Unknown mode executor={execution_mode}, fallback to direct")
+            mode_mismatch = {
+                "requested_mode": execution_mode,
+                "fallback_mode": "direct",
+                "reason": f"executor_not_found:{execution_mode}",
+            }
+            execution_mode = "direct"
             executor = self.mode_executors["direct"]
-        return await executor.execute(self, task, payload)
+        result = await executor.execute(self, task, payload)
+        result.setdefault("effectiveMode", execution_mode)
+        if mode_mismatch:
+            result["modeMismatch"] = mode_mismatch
+        return result
 
     async def execute_with_timeout(self, task: str, context: Dict[str, Any], mode: Optional[str] = None) -> Dict[str, Any]:
         """Execute agent task with timeout and retry logic"""
@@ -204,6 +233,19 @@ class BaseAgent(ABC):
                     self.run(task, mode=mode, context=context),
                     timeout=self.timeout,
                 )
+                mode_mismatch = result.get("modeMismatch")
+                if mode_mismatch:
+                    event_publisher.publish_diagnosis_event(session_id, {
+                        "type": "mode_mismatch",
+                        "id": str(uuid.uuid4()),
+                        "agentId": trace_agent_id,
+                        "parentId": trace_parent_id,
+                        "agentName": self.agent_name,
+                        "requestedMode": mode_mismatch.get("requested_mode"),
+                        "fallbackMode": mode_mismatch.get("fallback_mode"),
+                        "reason": mode_mismatch.get("reason"),
+                        "timestamp": datetime.now().isoformat(),
+                    })
                 latency = int((asyncio.get_event_loop().time() - started_at) * 1000)
                 input_tokens = int(result.get("inputTokens", 0))
                 output_tokens = int(result.get("outputTokens", 0))
