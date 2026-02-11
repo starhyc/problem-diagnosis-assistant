@@ -104,3 +104,44 @@ def test_can_restore_full_state_from_snapshot_and_events_with_waiting_and_retryi
     ).fetchall()
     transitions = [json.loads(row[0])["to_status"] for row in status_events]
     assert transitions == ["running", "waiting_user", "running", "retrying"]
+
+
+def test_restart_can_rebuild_consistent_state_from_events_only():
+    db = _build_test_session()
+    state_manager = StateManager()
+    session_id = "session-recovery-events-only"
+
+    state_manager.create_state(session_id)
+    state_manager.transition(session_id, "running", db, event_data={"stage": "boot"})
+    state_manager.record_event(session_id, "message_added", {"role": "assistant", "content": "collecting evidence"}, db)
+    state_manager.record_event(session_id, "confidence_updated", {"confidence": 65}, db)
+    state_manager.transition(session_id, "waiting_user", db, event_data={"stage": "awaiting_confirmation"})
+
+    db.execute(text("DELETE FROM diagnosis_sessions WHERE session_id = :session_id"), {"session_id": session_id})
+    db.commit()
+
+    state_manager.invalidate_cache(session_id)
+
+    restored = state_manager.replay_events(session_id, 0, db)
+    assert restored is not None
+    assert restored.task_status == "waiting_user"
+    assert restored.messages[-1]["content"] == "collecting evidence"
+    assert restored.confidence == 65
+
+    events = db.execute(
+        text(
+            """
+            SELECT event_type, sequence
+            FROM diagnosis_events
+            WHERE session_id = :session_id
+            ORDER BY sequence
+            """
+        ),
+        {"session_id": session_id},
+    ).fetchall()
+    assert [row[0] for row in events] == [
+        "task_status_changed",
+        "message_added",
+        "confidence_updated",
+        "task_status_changed",
+    ]

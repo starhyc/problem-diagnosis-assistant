@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.core.logging_config import get_logger
 import json
+import time
 
 logger = get_logger(__name__)
 
@@ -42,6 +43,8 @@ class DiagnosisState:
 class StateManager:
     def __init__(self):
         self._memory_states: Dict[str, DiagnosisState] = {}
+        self._cache_expiry: Dict[str, float] = {}
+        self._cache_ttl_seconds = 300
         self._task_status_transitions: Dict[str, List[str]] = {
             "submitted": ["running", "canceled", "failed"],
             "running": ["waiting_user", "retrying", "completed", "failed", "canceled"],
@@ -63,22 +66,57 @@ class StateManager:
             raise ValueError(f"Invalid task status transition: {current_status} -> {task_status}")
         state_data["task_status"] = task_status
 
-    def transition_task_status(
+    def _cache_state(self, session_id: str, state: DiagnosisState):
+        self._memory_states[session_id] = state
+        self._cache_expiry[session_id] = time.time() + self._cache_ttl_seconds
+
+    def invalidate_cache(self, session_id: str):
+        self._memory_states.pop(session_id, None)
+        self._cache_expiry.pop(session_id, None)
+
+    def _get_authoritative_task_status(self, session_id: str, db: Session) -> str:
+        from sqlalchemy import text
+
+        row = db.execute(
+            text(
+                """
+                SELECT event_data
+                FROM diagnosis_events
+                WHERE session_id = :session_id AND event_type = 'task_status_changed'
+                ORDER BY sequence DESC
+                LIMIT 1
+                """
+            ),
+            {"session_id": session_id},
+        ).fetchone()
+        if row:
+            payload = row[0]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            return payload.get("to_status", "submitted")
+
+        snapshot_row = db.execute(
+            text("SELECT snapshot_data FROM diagnosis_sessions WHERE session_id = :session_id"),
+            {"session_id": session_id},
+        ).fetchone()
+        if snapshot_row and snapshot_row[0]:
+            snapshot_data = snapshot_row[0]
+            if isinstance(snapshot_data, str):
+                snapshot_data = json.loads(snapshot_data)
+            return snapshot_data.get("task_status", "submitted")
+        return "submitted"
+
+    def transition(
         self,
         session_id: str,
         task_status: str,
         db: Session,
         event_data: Optional[Dict[str, Any]] = None,
+        state_data: Optional[Dict[str, Any]] = None,
     ):
-        state = self._memory_states.get(session_id)
-        if not state:
-            state = self.create_state(session_id)
-
-        previous = state.task_status
+        previous = self._get_authoritative_task_status(session_id, db)
         if not self.validate_task_status_transition(previous, task_status):
             raise ValueError(f"Invalid task status transition: {previous} -> {task_status}")
-
-        state.task_status = task_status
 
         payload = {
             "from_status": previous,
@@ -87,22 +125,47 @@ class StateManager:
         }
 
         try:
-            self._upsert_task_status_snapshot(session_id, task_status, db)
             self._insert_event_row(session_id, "task_status_changed", payload, db)
+            self._refresh_snapshot_from_events(session_id, db)
             db.commit()
+            self.invalidate_cache(session_id)
+            if state_data is not None:
+                state_data["task_status"] = task_status
+            cached_state = self._memory_states.get(session_id)
+            if cached_state:
+                cached_state.task_status = task_status
         except Exception:
             db.rollback()
-            state.task_status = previous
             raise
 
+    def transition_task_status(
+        self,
+        session_id: str,
+        task_status: str,
+        db: Session,
+        event_data: Optional[Dict[str, Any]] = None,
+        state_data: Optional[Dict[str, Any]] = None,
+    ):
+        self.transition(
+            session_id=session_id,
+            task_status=task_status,
+            db=db,
+            event_data=event_data,
+            state_data=state_data,
+        )
+
     def get_state(self, session_id: str) -> Optional[DiagnosisState]:
-        """Get current state from memory"""
+        """Get current state from expirable in-memory cache"""
+        expiry = self._cache_expiry.get(session_id)
+        if not expiry or expiry < time.time():
+            self.invalidate_cache(session_id)
+            return None
         return self._memory_states.get(session_id)
 
     def create_state(self, session_id: str) -> DiagnosisState:
         """Create new diagnosis state"""
         state = DiagnosisState(session_id)
-        self._memory_states[session_id] = state
+        self._cache_state(session_id, state)
         logger.info(f"Created state for session: {session_id}")
         return state
 
@@ -113,6 +176,7 @@ class StateManager:
             for key, value in updates.items():
                 if hasattr(state, key):
                     setattr(state, key, value)
+            self._cache_state(session_id, state)
 
     def save_snapshot(self, session_id: str, db: Session):
         """Save state snapshot to database"""
@@ -139,12 +203,15 @@ class StateManager:
             {"session_id": session_id, "snapshot_data": snapshot_data},
         )
         db.commit()
+        self._cache_state(session_id, state)
         logger.info(f"Saved snapshot for session: {session_id}")
 
     def record_event(self, session_id: str, event_type: str, event_data: Dict[str, Any], db: Session):
         """Record event to database"""
         self._insert_event_row(session_id, event_type, event_data, db)
+        self._refresh_snapshot_from_events(session_id, db)
         db.commit()
+        self.invalidate_cache(session_id)
 
     def _insert_event_row(self, session_id: str, event_type: str, event_data: Dict[str, Any], db: Session):
         """Insert event with database-derived per-session monotonic sequence."""
@@ -219,20 +286,33 @@ class StateManager:
         )
         return inserted.rowcount > 0
 
-    def _upsert_task_status_snapshot(self, session_id: str, task_status: str, db: Session):
+    def _refresh_snapshot_from_events(self, session_id: str, db: Session):
+        state = DiagnosisState(session_id)
+        from sqlalchemy import text
+
+        event_rows = db.execute(
+            text(
+                """
+                SELECT event_type, event_data
+                FROM diagnosis_events
+                WHERE session_id = :session_id
+                ORDER BY sequence ASC
+                """
+            ),
+            {"session_id": session_id},
+        ).fetchall()
+        for row in event_rows:
+            payload = row.event_data
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            self._apply_event(state, row.event_type, payload)
+
+        self._upsert_snapshot(session_id, state.to_dict(), db)
+
+    def _upsert_snapshot(self, session_id: str, snapshot: Dict[str, Any], db: Session):
         from sqlalchemy import text
 
         if db.bind and db.bind.dialect.name == "sqlite":
-            existing_row = db.execute(
-                text("SELECT snapshot_data FROM diagnosis_sessions WHERE session_id = :session_id"),
-                {"session_id": session_id},
-            ).fetchone()
-            existing = {}
-            if existing_row and existing_row[0]:
-                existing = json.loads(existing_row[0])
-            existing["task_status"] = task_status
-            existing.setdefault("session_id", session_id)
-
             db.execute(
                 text(
                     """
@@ -247,7 +327,7 @@ class StateManager:
                 ),
                 {
                     "session_id": session_id,
-                    "snapshot_data": json.dumps(existing),
+                    "snapshot_data": json.dumps(snapshot),
                 },
             )
             return
@@ -259,16 +339,14 @@ class StateManager:
                 VALUES (:session_id, CAST(:snapshot_data AS JSONB), 1)
                 ON CONFLICT (session_id)
                 DO UPDATE SET
-                    snapshot_data = COALESCE(diagnosis_sessions.snapshot_data, '{}'::jsonb) ||
-                                    jsonb_build_object('task_status', :task_status),
+                    snapshot_data = CAST(:snapshot_data AS JSONB),
                     snapshot_version = diagnosis_sessions.snapshot_version + 1,
                     updated_at = NOW()
                 """
             ),
             {
                 "session_id": session_id,
-                "snapshot_data": json.dumps({"session_id": session_id, "task_status": task_status}),
-                "task_status": task_status,
+                "snapshot_data": json.dumps(snapshot),
             },
         )
 
@@ -295,7 +373,7 @@ class StateManager:
             state.mode = data.get("mode", "plan_execute")
             state.mode_history = data.get("mode_history", [])
             state.final_effective_mode = data.get("final_effective_mode", state.mode)
-            self._memory_states[session_id] = state
+            self._cache_state(session_id, state)
             return state
         return None
 
@@ -305,7 +383,7 @@ class StateManager:
         if not state:
             state = self.load_from_snapshot(session_id, db)
             if not state:
-                return None
+                state = self.create_state(session_id)
 
         from sqlalchemy import text
 
@@ -322,10 +400,11 @@ class StateManager:
         ).fetchall()
 
         for event in events:
-            event_type, event_data_str, sequence = event
-            event_data = json.loads(event_data_str)
+            event_type, event_data_raw, sequence = event
+            event_data = event_data_raw if isinstance(event_data_raw, dict) else json.loads(event_data_raw)
             self._apply_event(state, event_type, event_data)
 
+        self._cache_state(session_id, state)
         return state
 
     def list_sessions(
