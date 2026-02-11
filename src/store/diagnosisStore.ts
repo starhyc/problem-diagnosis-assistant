@@ -3,7 +3,7 @@ import { investigationApi } from '../lib/api';
 import { wsService, ConfirmationRequired } from '../lib/websocket';
 import { AgentTrace, ExecutionStep, TraceReplaySnapshot } from '../types/trace';
 import { DiagnosisMode } from '../types/agent';
-import { DiagnosisEvent } from '../contracts/diagnosisProtocol';
+import { DiagnosisEvent, DiagnosisEventType } from '../contracts/diagnosisProtocol';
 
 export interface AgentMessage {
   id: string;
@@ -39,19 +39,50 @@ export interface DiagnosisCase {
 export type ConfirmationFlowState = 'idle' | 'pending_r2' | 'pending_r3' | 'approved' | 'rejected' | 'timeout';
 type TraceLifecycleState = 'idle' | 'started' | 'completed';
 
-interface DiagnosisState {
+type DiagnosisEventMap = {
+  [K in DiagnosisEventType]: Record<string, unknown>;
+};
+
+type EventConsumer = {
+  [K in DiagnosisEventType]?: (state: DiagnosisStoreState, event: DiagnosisEvent & { type: K; data: DiagnosisEventMap[K] }) => Partial<DiagnosisStoreState>;
+};
+
+interface SessionStoreState {
   currentCase: DiagnosisCase | null;
   isRunning: boolean;
   proposedAction: { id: string; title: string; confidence: number } | null;
   wsConnected: boolean;
-  pendingConfirmation: ConfirmationRequired | null;
-  confirmationFlowState: ConfirmationFlowState;
   currentAgentType: string;
+  eventLedger: Set<string>;
+}
+
+interface TraceStoreState {
   traces: Map<string, AgentTrace>;
   traceLifecycle: Map<string, TraceLifecycleState>;
   selectedAgentId: string | null;
   rootAgentIds: string[];
   replaySnapshot: TraceReplaySnapshot | null;
+  eventLedger: Set<string>;
+}
+
+interface ConfirmationStoreState {
+  pendingConfirmation: ConfirmationRequired | null;
+  confirmationFlowState: ConfirmationFlowState;
+  eventLedger: Set<string>;
+}
+
+interface TraceViewState {
+  traceMap: Map<string, AgentTrace>;
+  traceList: AgentTrace[];
+  rootAgentIds: string[];
+  selectedAgentId: string | null;
+  selectedTrace: AgentTrace | null;
+}
+
+interface DiagnosisStoreState {
+  sessionStore: SessionStoreState;
+  traceStore: TraceStoreState;
+  confirmationStore: ConfirmationStoreState;
   startDiagnosis: (agentType: string, symptom: string, description: string, mode?: DiagnosisMode) => Promise<void>;
   stopDiagnosis: () => Promise<void>;
   approveAction: () => Promise<void>;
@@ -60,7 +91,32 @@ interface DiagnosisState {
   initializeWebSocket: () => void;
   disconnectWebSocket: () => void;
   selectAgent: (agentId: string | null) => void;
+  getTraceView: () => TraceViewState;
 }
+
+const initialSessionStore = (): SessionStoreState => ({
+  currentCase: null,
+  isRunning: false,
+  proposedAction: null,
+  wsConnected: false,
+  currentAgentType: 'diagnosis',
+  eventLedger: new Set(),
+});
+
+const initialTraceStore = (): TraceStoreState => ({
+  traces: new Map(),
+  traceLifecycle: new Map(),
+  selectedAgentId: null,
+  rootAgentIds: [],
+  replaySnapshot: null,
+  eventLedger: new Set(),
+});
+
+const initialConfirmationStore = (): ConfirmationStoreState => ({
+  pendingConfirmation: null,
+  confirmationFlowState: 'idle',
+  eventLedger: new Set(),
+});
 
 let wsUnsubscribe: (() => void) | null = null;
 let statusUnsubscribe: (() => void) | null = null;
@@ -77,172 +133,401 @@ const mapStepType = (stepData: Record<string, unknown>): ExecutionStep['type'] =
   return 'llm_thinking';
 };
 
-export function applyDiagnosisEvent(state: DiagnosisState, message: DiagnosisEvent): Partial<DiagnosisState> {
-  const data = asRecord(message.data);
+const toEventKey = (type: DiagnosisEventType, timestamp: string, data: Record<string, unknown>, candidates: string[]): string => {
+  const keyById = candidates.find((key) => asString(data[key]));
+  if (keyById) {
+    return `${type}:${asString(data[keyById])}`;
+  }
+  return `${type}:${timestamp}:${JSON.stringify(data)}`;
+};
 
-  switch (message.type) {
-    case 'agent_message': {
-      const agentMsg = data as unknown as AgentMessage;
+const sessionConsumers: EventConsumer = {
+  agent_message: (state, event) => {
+    const key = toEventKey(event.type, event.timestamp, event.data, ['id', 'messageId']);
+    if (state.sessionStore.eventLedger.has(key)) return {};
+    const ledger = new Set(state.sessionStore.eventLedger);
+    ledger.add(key);
+
+    const agentMsg = event.data as unknown as AgentMessage;
+    return {
+      sessionStore: {
+        ...state.sessionStore,
+        eventLedger: ledger,
+        currentCase: state.sessionStore.currentCase
+          ? { ...state.sessionStore.currentCase, messages: [...state.sessionStore.currentCase.messages, agentMsg] }
+          : null,
+      },
+    };
+  },
+  action_proposal: (state, event) => ({
+    sessionStore: {
+      ...state.sessionStore,
+      proposedAction: {
+        id: asString(event.data.id, 'current-action'),
+        title: asString(event.data.title),
+        confidence: asNumber(event.data.confidence),
+      },
+    },
+  }),
+  diagnosis_status: (state, event) => {
+    const status = asString(event.data.status);
+    return {
+      sessionStore: {
+        ...state.sessionStore,
+        isRunning: status === 'running',
+        currentCase: state.sessionStore.currentCase
+          ? { ...state.sessionStore.currentCase, status: status === 'failed' ? 'failed' : status === 'completed' ? 'resolved' : 'investigating' }
+          : null,
+      },
+    };
+  },
+  diagnosis_progress: (state, event) => {
+    const phase = asString(event.data.phase);
+    if (phase === 'confidence') {
       return {
-        currentCase: state.currentCase ? { ...state.currentCase, messages: [...state.currentCase.messages, agentMsg] } : null,
-      };
-    }
-    case 'action_proposal': {
-      return {
-        proposedAction: {
-          id: asString(data.id, 'current-action'),
-          title: asString(data.title),
-          confidence: asNumber(data.confidence),
+        sessionStore: {
+          ...state.sessionStore,
+          currentCase: state.sessionStore.currentCase ? { ...state.sessionStore.currentCase, confidence: asNumber(event.data.confidence) } : null,
         },
       };
     }
-    case 'diagnosis_status': {
-      const status = asString(data.status);
+    if (phase === 'timeline' && Array.isArray(event.data.timeline)) {
       return {
-        isRunning: status === 'running',
-        currentCase: state.currentCase
-          ? { ...state.currentCase, status: status === 'failed' ? 'failed' : status === 'completed' ? 'resolved' : 'investigating' }
-          : null,
+        sessionStore: {
+          ...state.sessionStore,
+          currentCase: state.sessionStore.currentCase ? { ...state.sessionStore.currentCase, timeline: event.data.timeline as TimelineStep[] } : null,
+        },
       };
     }
-    case 'diagnosis_progress': {
-      const phase = asString(data.phase);
-      if (phase === 'confidence') {
-        return { currentCase: state.currentCase ? { ...state.currentCase, confidence: asNumber(data.confidence) } : null };
-      }
-      if (phase === 'timeline' && Array.isArray(data.timeline)) {
-        return {
-          currentCase: state.currentCase ? { ...state.currentCase, timeline: data.timeline as TimelineStep[] } : null,
-        };
-      }
-      return {};
-    }
-    case 'timeline_update':
-      return { currentCase: state.currentCase ? { ...state.currentCase, timeline: (data.timeline as TimelineStep[]) || [] } : null };
-    case 'confidence_update':
-      return { currentCase: state.currentCase ? { ...state.currentCase, confidence: asNumber(data.confidence) } : null };
-    case 'confirmation_required': {
-      const confirmation = data as unknown as ConfirmationRequired;
-      const risk = confirmation.riskLevel;
-      return {
+    return {};
+  },
+  timeline_update: (state, event) => ({
+    sessionStore: {
+      ...state.sessionStore,
+      currentCase: state.sessionStore.currentCase ? { ...state.sessionStore.currentCase, timeline: (event.data.timeline as TimelineStep[]) || [] } : null,
+    },
+  }),
+  confidence_update: (state, event) => ({
+    sessionStore: {
+      ...state.sessionStore,
+      currentCase: state.sessionStore.currentCase ? { ...state.sessionStore.currentCase, confidence: asNumber(event.data.confidence) } : null,
+    },
+  }),
+  diagnosis_completed: (state) => ({
+    sessionStore: {
+      ...state.sessionStore,
+      isRunning: false,
+    },
+  }),
+  diagnosis_failed: (state) => ({
+    sessionStore: {
+      ...state.sessionStore,
+      isRunning: false,
+    },
+  }),
+  error: (state) => ({
+    sessionStore: {
+      ...state.sessionStore,
+      isRunning: false,
+    },
+  }),
+};
+
+const traceConsumers: EventConsumer = {
+  agent_trace_start: (state, event) => {
+    const agentId = asString(event.data.agentId);
+    if (!agentId) return {};
+    const key = toEventKey(event.type, event.timestamp, event.data, ['eventId', 'id', 'stepId', 'agentId']);
+    if (state.traceStore.eventLedger.has(key) || state.traceStore.traceLifecycle.get(agentId) === 'started') return {};
+
+    const lifecycle = new Map(state.traceStore.traceLifecycle);
+    lifecycle.set(agentId, 'started');
+    const traces = new Map(state.traceStore.traces);
+    traces.set(agentId, {
+      id: agentId,
+      name: asString(event.data.agentName, 'Unknown Agent'),
+      parentId: asString(event.data.parentId || event.data.parentAgentId) || null,
+      status: 'running',
+      startTime: asString(event.data.startTime || event.data.timestamp, event.timestamp || new Date().toISOString()),
+      totalTokens: { input: asNumber(event.data.inputTokens), output: asNumber(event.data.outputTokens) },
+      model: asString(event.data.model),
+      costEstimate: asNumber(event.data.costEstimate),
+      steps: [],
+      taskDescription: asString(event.data.taskDescription),
+    });
+
+    const ledger = new Set(state.traceStore.eventLedger);
+    ledger.add(key);
+    const parentId = asString(event.data.parentId || event.data.parentAgentId);
+    const rootAgentIds = parentId ? state.traceStore.rootAgentIds : state.traceStore.rootAgentIds.includes(agentId) ? state.traceStore.rootAgentIds : [...state.traceStore.rootAgentIds, agentId];
+    return {
+      traceStore: {
+        ...state.traceStore,
+        traces,
+        traceLifecycle: lifecycle,
+        rootAgentIds,
+        eventLedger: ledger,
+        selectedAgentId: state.traceStore.selectedAgentId || agentId,
+      },
+    };
+  },
+  agent_trace_step: (state, event) => {
+    const agentId = asString(event.data.agentId);
+    if (!agentId || state.traceStore.traceLifecycle.get(agentId) !== 'started') return {};
+    const trace = state.traceStore.traces.get(agentId);
+    if (!trace) return {};
+
+    const stepKey = toEventKey(event.type, event.timestamp, event.data, ['eventId', 'stepId', 'id']);
+    if (state.traceStore.eventLedger.has(stepKey)) return {};
+
+    const mappedStep: ExecutionStep = {
+      ...(event.data as unknown as ExecutionStep),
+      id: asString(event.data.id) || asString(event.data.stepId),
+      type: mapStepType(event.data),
+      timestamp: asString(event.data.timestamp, event.timestamp || new Date().toISOString()),
+    };
+
+    const traces = new Map(state.traceStore.traces);
+    traces.set(agentId, {
+      ...trace,
+      model: trace.model || asString(event.data.model),
+      costEstimate: (trace.costEstimate || 0) + asNumber(event.data.costEstimate),
+      steps: [...trace.steps, mappedStep],
+    });
+
+    const ledger = new Set(state.traceStore.eventLedger);
+    ledger.add(stepKey);
+
+    return {
+      traceStore: {
+        ...state.traceStore,
+        traces,
+        eventLedger: ledger,
+      },
+    };
+  },
+  agent_trace_complete: (state, event) => {
+    const agentId = asString(event.data.agentId);
+    if (!agentId || state.traceStore.traceLifecycle.get(agentId) !== 'started') return {};
+    const trace = state.traceStore.traces.get(agentId);
+    if (!trace) return {};
+
+    const completeKey = toEventKey(event.type, event.timestamp, event.data, ['eventId', 'agentId']);
+    if (state.traceStore.eventLedger.has(completeKey)) return {};
+
+    const lifecycle = new Map(state.traceStore.traceLifecycle);
+    lifecycle.set(agentId, 'completed');
+    const traces = new Map(state.traceStore.traces);
+    traces.set(agentId, {
+      ...trace,
+      status: asString(event.data.status, 'success') as AgentTrace['status'],
+      endTime: asString(event.data.endTime || event.data.timestamp, event.timestamp || new Date().toISOString()),
+      duration: asNumber(event.data.duration, asNumber(event.data.latency)),
+      latency: asNumber(event.data.latency),
+      totalTokens:
+        (event.data.totalTokens as AgentTrace['totalTokens']) || {
+          input: asNumber(event.data.inputTokens, trace.totalTokens.input),
+          output: asNumber(event.data.outputTokens, trace.totalTokens.output),
+        },
+      model: asString(event.data.model, trace.model),
+      costEstimate: asNumber(event.data.costEstimate, trace.costEstimate || 0),
+      error: asString(event.data.error),
+    });
+
+    const ledger = new Set(state.traceStore.eventLedger);
+    ledger.add(completeKey);
+
+    return {
+      traceStore: {
+        ...state.traceStore,
+        traces,
+        traceLifecycle: lifecycle,
+        eventLedger: ledger,
+      },
+    };
+  },
+  replay_snapshot: (state, event) => ({
+    traceStore: {
+      ...state.traceStore,
+      replaySnapshot: event.data as unknown as TraceReplaySnapshot,
+    },
+  }),
+  diagnosis_completed: (state, event) => {
+    const replaySnapshot: TraceReplaySnapshot = {
+      snapshotAt: event.timestamp || new Date().toISOString(),
+      caseId: state.sessionStore.currentCase?.id,
+      traces: Array.from(state.traceStore.traces.values()),
+      rootAgentIds: [...state.traceStore.rootAgentIds],
+    };
+
+    return {
+      traceStore: {
+        ...state.traceStore,
+        replaySnapshot,
+      },
+    };
+  },
+};
+
+const confirmationConsumers: EventConsumer = {
+  confirmation_required: (state, event) => {
+    const confirmation = event.data as unknown as ConfirmationRequired;
+    const risk = confirmation.riskLevel;
+    const key = toEventKey(event.type, event.timestamp, event.data, ['id', 'confirmationId']);
+    if (state.confirmationStore.eventLedger.has(key)) return {};
+    const ledger = new Set(state.confirmationStore.eventLedger);
+    ledger.add(key);
+    return {
+      confirmationStore: {
         pendingConfirmation: confirmation,
         confirmationFlowState: risk === 'R3' ? 'pending_r3' : risk === 'R2' ? 'pending_r2' : 'idle',
+        eventLedger: ledger,
+      },
+    };
+  },
+  confirmation_rejected: (state) => ({
+    confirmationStore: {
+      ...state.confirmationStore,
+      pendingConfirmation: null,
+      confirmationFlowState: 'rejected',
+    },
+    sessionStore: {
+      ...state.sessionStore,
+      isRunning: false,
+    },
+  }),
+  confirmation_status: (state, event) => {
+    const action = asString(event.data.action);
+    const statusValue = asString(event.data.status);
+
+    if (statusValue === 'timed_out' || action === 'timeout') {
+      return {
+        confirmationStore: { ...state.confirmationStore, pendingConfirmation: null, confirmationFlowState: 'timeout' },
+        sessionStore: { ...state.sessionStore, isRunning: false },
       };
     }
-    case 'confirmation_rejected':
-      return { pendingConfirmation: null, confirmationFlowState: 'rejected', isRunning: false };
-    case 'confirmation_status': {
-      const action = asString(data.action);
-      const statusValue = asString(data.status);
-      if (statusValue === 'timed_out' || action === 'timeout') return { pendingConfirmation: null, confirmationFlowState: 'timeout', isRunning: false };
-      if (action === 'second_confirm') {
-        return {
+
+    if (action === 'second_confirm') {
+      return {
+        confirmationStore: {
+          ...state.confirmationStore,
           confirmationFlowState: 'pending_r3',
-          pendingConfirmation: state.pendingConfirmation
-            ? { ...state.pendingConfirmation, riskLevel: 'R3', message: `R3 二次确认：${state.pendingConfirmation.message}` }
-            : state.pendingConfirmation,
-        };
-      }
-      if (statusValue === 'rejected' || action === 'reject' || action === 'cancel') {
-        return { pendingConfirmation: null, confirmationFlowState: 'rejected', isRunning: false };
-      }
-      return { pendingConfirmation: null, confirmationFlowState: 'approved' };
-    }
-    case 'agent_trace_start': {
-      const agentId = asString(data.agentId);
-      if (!agentId || state.traceLifecycle.get(agentId) === 'started') return {};
-      const lifecycle = new Map(state.traceLifecycle);
-      lifecycle.set(agentId, 'started');
-      const traces = new Map(state.traces);
-      traces.set(agentId, {
-        id: agentId,
-        name: asString(data.agentName, 'Unknown Agent'),
-        parentId: asString(data.parentId) || null,
-        status: 'running',
-        startTime: asString(data.startTime, new Date().toISOString()),
-        totalTokens: { input: asNumber(data.inputTokens), output: asNumber(data.outputTokens) },
-        model: asString(data.model),
-        costEstimate: asNumber(data.costEstimate),
-        steps: [],
-        taskDescription: asString(data.taskDescription),
-      });
-      const rootAgentIds = asString(data.parentId) ? state.rootAgentIds : state.rootAgentIds.includes(agentId) ? state.rootAgentIds : [...state.rootAgentIds, agentId];
-      return { traces, traceLifecycle: lifecycle, rootAgentIds, selectedAgentId: state.selectedAgentId || agentId };
-    }
-    case 'agent_trace_step': {
-      const agentId = asString(data.agentId);
-      if (!agentId || state.traceLifecycle.get(agentId) !== 'started') return {};
-      const trace = state.traces.get(agentId);
-      if (!trace) return {};
-      const mappedStep: ExecutionStep = {
-        ...(data as unknown as ExecutionStep),
-        id: asString(data.id) || asString(data.stepId),
-        type: mapStepType(data),
-        timestamp: asString(data.timestamp, new Date().toISOString()),
+          pendingConfirmation: state.confirmationStore.pendingConfirmation
+            ? {
+                ...state.confirmationStore.pendingConfirmation,
+                riskLevel: 'R3',
+                message: `R3 二次确认：${state.confirmationStore.pendingConfirmation.message}`,
+              }
+            : state.confirmationStore.pendingConfirmation,
+        },
       };
-      const traces = new Map(state.traces);
-      traces.set(agentId, { ...trace, model: trace.model || asString(data.model), costEstimate: (trace.costEstimate || 0) + asNumber(data.costEstimate), steps: [...trace.steps, mappedStep] });
-      return { traces };
     }
-    case 'agent_trace_complete': {
-      const agentId = asString(data.agentId);
-      if (!agentId || state.traceLifecycle.get(agentId) !== 'started') return {};
-      const trace = state.traces.get(agentId);
-      if (!trace) return {};
-      const lifecycle = new Map(state.traceLifecycle);
-      lifecycle.set(agentId, 'completed');
-      const traces = new Map(state.traces);
-      traces.set(agentId, {
-        ...trace,
-        status: asString(data.status, 'success') as AgentTrace['status'],
-        endTime: asString(data.endTime, new Date().toISOString()),
-        duration: asNumber(data.duration, asNumber(data.latency)),
-        latency: asNumber(data.latency),
-        totalTokens: (data.totalTokens as AgentTrace['totalTokens']) || { input: asNumber(data.inputTokens, trace.totalTokens.input), output: asNumber(data.outputTokens, trace.totalTokens.output) },
-        model: asString(data.model, trace.model),
-        costEstimate: asNumber(data.costEstimate, trace.costEstimate || 0),
-        error: asString(data.error),
-      });
-      return { traces, traceLifecycle: lifecycle };
-    }
-    case 'replay_snapshot':
-      return { replaySnapshot: data as unknown as TraceReplaySnapshot };
-    case 'diagnosis_completed': {
-      const replaySnapshot: TraceReplaySnapshot = {
-        snapshotAt: message.timestamp || new Date().toISOString(),
-        caseId: state.currentCase?.id,
-        traces: Array.from(state.traces.values()),
-        rootAgentIds: [...state.rootAgentIds],
+
+    if (statusValue === 'rejected' || action === 'reject' || action === 'cancel') {
+      return {
+        confirmationStore: { ...state.confirmationStore, pendingConfirmation: null, confirmationFlowState: 'rejected' },
+        sessionStore: { ...state.sessionStore, isRunning: false },
       };
-      return { replaySnapshot, isRunning: false };
     }
-    case 'diagnosis_failed':
-    case 'error':
-      return { isRunning: false };
-    default:
-      return {};
-  }
+
+    return {
+      confirmationStore: { ...state.confirmationStore, pendingConfirmation: null, confirmationFlowState: 'approved' },
+    };
+  },
+};
+
+export function applyDiagnosisEvent(state: DiagnosisStoreState, message: DiagnosisEvent): Partial<DiagnosisStoreState> {
+  const normalizedEvent: DiagnosisEvent = {
+    ...message,
+    data: asRecord(message.data),
+  };
+
+  const patch: Partial<DiagnosisStoreState> = {};
+  const consumers: EventConsumer[] = [sessionConsumers, traceConsumers, confirmationConsumers];
+
+  consumers.forEach((consumer) => {
+    const handler = consumer[normalizedEvent.type];
+    if (!handler) return;
+    const currentState = { ...state, ...patch } as DiagnosisStoreState;
+    Object.assign(patch, handler(currentState, normalizedEvent as never));
+  });
+
+  return patch;
 }
 
-export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
-  currentCase: null,
-  isRunning: false,
-  proposedAction: null,
-  wsConnected: false,
-  pendingConfirmation: null,
-  confirmationFlowState: 'idle',
-  currentAgentType: 'diagnosis',
-  traces: new Map(),
-  traceLifecycle: new Map(),
-  selectedAgentId: null,
-  rootAgentIds: [],
-  replaySnapshot: null,
+export function projectTraceView(traceStore: TraceStoreState): TraceViewState {
+  const traceMap = traceStore.traces;
+  const traceList = Array.from(traceMap.values());
+  const selectedTrace = traceStore.selectedAgentId ? traceMap.get(traceStore.selectedAgentId) || null : null;
+
+  return {
+    traceMap,
+    traceList,
+    rootAgentIds: traceStore.rootAgentIds,
+    selectedAgentId: traceStore.selectedAgentId,
+    selectedTrace,
+  };
+}
+
+export function createReplayState(events: DiagnosisEvent[], maxIndex: number, baseCaseId?: string): TraceViewState {
+  const initial: DiagnosisStoreState = {
+    sessionStore: {
+      ...initialSessionStore(),
+      currentCase: baseCaseId
+        ? {
+            id: baseCaseId,
+            symptom: '',
+            description: '',
+            status: 'investigating',
+            leadAgent: 'diagnosis',
+            confidence: 0,
+            messages: [],
+            timeline: [],
+            createdAt: new Date().toISOString(),
+          }
+        : null,
+    },
+    traceStore: initialTraceStore(),
+    confirmationStore: initialConfirmationStore(),
+    startDiagnosis: async () => undefined,
+    stopDiagnosis: async () => undefined,
+    approveAction: async () => undefined,
+    rejectAction: async () => undefined,
+    respondToConfirmation: () => undefined,
+    initializeWebSocket: () => undefined,
+    disconnectWebSocket: () => undefined,
+    selectAgent: () => undefined,
+    getTraceView: () => projectTraceView(initialTraceStore()),
+  };
+
+  let replayState = initial;
+  events.slice(0, Math.max(0, maxIndex + 1)).forEach((event) => {
+    replayState = { ...replayState, ...applyDiagnosisEvent(replayState, event) };
+  });
+
+  return projectTraceView(replayState.traceStore);
+}
+
+export function mapHistoryEventToDiagnosisEvent(eventType: string, timestamp: string, eventData: Record<string, unknown>): DiagnosisEvent {
+  return {
+    type: eventType as DiagnosisEventType,
+    timestamp,
+    data: eventData,
+  };
+}
+
+export const useDiagnosisStore = create<DiagnosisStoreState>((set, get) => ({
+  sessionStore: initialSessionStore(),
+  traceStore: initialTraceStore(),
+  confirmationStore: initialConfirmationStore(),
 
   initializeWebSocket: () => {
     if (wsUnsubscribe) return;
     wsService.connect().catch((error) => console.error('[DiagnosisStore] WebSocket connection failed:', error));
-    wsUnsubscribe = wsService.onMessage((message) => set((s) => applyDiagnosisEvent(s, message)));
-    statusUnsubscribe = wsService.onConnectionStatus((status) => set({ wsConnected: status === 'connected' }));
+    wsUnsubscribe = wsService.onMessage((message) => set((state) => applyDiagnosisEvent(state, message)));
+    statusUnsubscribe = wsService.onConnectionStatus((status) =>
+      set((state) => ({ sessionStore: { ...state.sessionStore, wsConnected: status === 'connected' } })),
+    );
   },
 
   disconnectWebSocket: () => {
@@ -257,28 +542,39 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
     try {
       const response = await investigationApi.startDiagnosis(agentType, symptom, description, undefined, undefined, mode);
       const caseId = response.session_id || `CASE-${agentType.toUpperCase()}-${Date.now()}`;
+
       set({
-        currentCase: { id: caseId, sessionId: response.session_id, taskId: response.task_id, symptom, description, status: 'investigating', leadAgent: agentType, confidence: 0, messages: [], timeline: [], createdAt: new Date().toISOString() },
-        isRunning: true,
-        proposedAction: null,
-        currentAgentType: agentType,
-        traces: new Map(),
-        traceLifecycle: new Map(),
-        rootAgentIds: [],
-        selectedAgentId: null,
-        replaySnapshot: null,
-        pendingConfirmation: null,
-        confirmationFlowState: 'idle',
+        sessionStore: {
+          ...initialSessionStore(),
+          currentCase: {
+            id: caseId,
+            sessionId: response.session_id,
+            taskId: response.task_id,
+            symptom,
+            description,
+            status: 'investigating',
+            leadAgent: agentType,
+            confidence: 0,
+            messages: [],
+            timeline: [],
+            createdAt: new Date().toISOString(),
+          },
+          isRunning: true,
+          currentAgentType: agentType,
+          wsConnected: get().sessionStore.wsConnected,
+        },
+        traceStore: initialTraceStore(),
+        confirmationStore: initialConfirmationStore(),
       });
       wsService.startDiagnosis(symptom, description, agentType, undefined, mode);
     } catch (error) {
       console.error('[DiagnosisStore] Failed to start diagnosis:', error);
-      set({ isRunning: false });
+      set((state) => ({ sessionStore: { ...state.sessionStore, isRunning: false } }));
     }
   },
 
   stopDiagnosis: async () => {
-    const sessionId = get().currentCase?.sessionId;
+    const sessionId = get().sessionStore.currentCase?.sessionId;
     if (sessionId) {
       try {
         await investigationApi.stopDiagnosis({ session_id: sessionId });
@@ -287,49 +583,77 @@ export const useDiagnosisStore = create<DiagnosisState>((set, get) => ({
       }
     }
     wsService.stopDiagnosis('User stopped');
-    set({ isRunning: false });
+    set((state) => ({ sessionStore: { ...state.sessionStore, isRunning: false } }));
   },
 
   approveAction: async () => {
     const state = get();
-    if (!state.proposedAction || !state.currentCase?.sessionId) return;
+    if (!state.sessionStore.proposedAction || !state.sessionStore.currentCase?.sessionId) return;
     try {
-      await investigationApi.approveAction({ session_id: state.currentCase.sessionId, action_id: state.proposedAction.id });
+      await investigationApi.approveAction({
+        session_id: state.sessionStore.currentCase.sessionId,
+        action_id: state.sessionStore.proposedAction.id,
+      });
     } catch (error) {
       console.error('[DiagnosisStore] Failed to approve action:', error);
     }
-    wsService.approveAction(state.proposedAction.id);
-    set((s) => ({ proposedAction: null, currentCase: s.currentCase ? { ...s.currentCase, status: 'resolved' } : null }));
+    wsService.approveAction(state.sessionStore.proposedAction.id);
+    set((s) => ({
+      sessionStore: {
+        ...s.sessionStore,
+        proposedAction: null,
+        currentCase: s.sessionStore.currentCase ? { ...s.sessionStore.currentCase, status: 'resolved' } : null,
+      },
+    }));
   },
 
   rejectAction: async () => {
     const state = get();
-    if (!state.proposedAction || !state.currentCase?.sessionId) return;
+    if (!state.sessionStore.proposedAction || !state.sessionStore.currentCase?.sessionId) return;
     try {
-      await investigationApi.rejectAction({ session_id: state.currentCase.sessionId, action_id: state.proposedAction.id, reason: 'User rejected' });
+      await investigationApi.rejectAction({
+        session_id: state.sessionStore.currentCase.sessionId,
+        action_id: state.sessionStore.proposedAction.id,
+        reason: 'User rejected',
+      });
     } catch (error) {
       console.error('[DiagnosisStore] Failed to reject action:', error);
     }
-    wsService.rejectAction(state.proposedAction.id, 'User rejected');
-    set({ proposedAction: null });
+    wsService.rejectAction(state.sessionStore.proposedAction.id, 'User rejected');
+    set((s) => ({ sessionStore: { ...s.sessionStore, proposedAction: null } }));
   },
 
   respondToConfirmation: (confirmationId, response) => {
-    const current = get().pendingConfirmation;
+    const current = get().confirmationStore.pendingConfirmation;
     if (!current) return;
+
     wsService.respondToConfirmation(confirmationId, response);
+
     if (response.action === 'second_confirm') {
-      set({ confirmationFlowState: 'pending_r3', pendingConfirmation: { ...current, riskLevel: 'R3', message: `R3 二次确认：${current.message}` } });
+      set((state) => ({
+        confirmationStore: {
+          ...state.confirmationStore,
+          confirmationFlowState: 'pending_r3',
+          pendingConfirmation: { ...current, riskLevel: 'R3', message: `R3 二次确认：${current.message}` },
+        },
+      }));
       return;
     }
+
     if (response.action === 'reject' || response.action === 'cancel') {
-      set({ pendingConfirmation: null, confirmationFlowState: 'rejected', isRunning: false });
+      set((state) => ({
+        confirmationStore: { ...state.confirmationStore, pendingConfirmation: null, confirmationFlowState: 'rejected' },
+        sessionStore: { ...state.sessionStore, isRunning: false },
+      }));
       return;
     }
-    set({ pendingConfirmation: null });
+
+    set((state) => ({ confirmationStore: { ...state.confirmationStore, pendingConfirmation: null } }));
   },
 
-  selectAgent: (agentId) => set({ selectedAgentId: agentId }),
+  selectAgent: (agentId) => set((state) => ({ traceStore: { ...state.traceStore, selectedAgentId: agentId } })),
+
+  getTraceView: () => projectTraceView(get().traceStore),
 }));
 
 export function getChildAgents(traces: Map<string, AgentTrace>, parentId: string): AgentTrace[] {

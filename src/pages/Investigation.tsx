@@ -30,11 +30,9 @@ export default function Investigation() {
   const { user } = useAuthStore();
   
   const {
-    currentCase,
-    isRunning,
-    proposedAction,
-    wsConnected,
-    pendingConfirmation,
+    sessionStore,
+    traceStore,
+    confirmationStore,
     startDiagnosis,
     stopDiagnosis,
     approveAction,
@@ -42,9 +40,11 @@ export default function Investigation() {
     respondToConfirmation,
     initializeWebSocket,
     disconnectWebSocket,
-    currentAgentType: storeAgentType,
-    traces,
   } = useDiagnosisStore();
+
+  const { currentCase, isRunning, proposedAction, wsConnected } = sessionStore;
+  const { pendingConfirmation } = confirmationStore;
+  const { traces } = traceStore;
 
   const currentAgentConfig = AGENT_TYPES.find(t => t.id === selectedAgentType);
 

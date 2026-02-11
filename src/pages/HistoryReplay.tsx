@@ -5,66 +5,14 @@ import ExecutionTimeline from '../components/investigation/ExecutionTimeline';
 import GlobalTimeline from '../components/investigation/GlobalTimeline';
 import { historyApi, HistoryEvent } from '../lib/api';
 import { formatRiskLevel } from '../lib/riskLevel';
-import { AgentTrace, ExecutionStep } from '../types/trace';
+import { createReplayState, mapHistoryEventToDiagnosisEvent } from '../store/diagnosisStore';
 
-function buildTraceMap(events: HistoryEvent[], maxIndex: number): Map<string, AgentTrace> {
-  const traces = new Map<string, AgentTrace>();
+function buildReplayView(events: HistoryEvent[], maxIndex: number, caseId?: string) {
+  const normalizedEvents = events.map((event) =>
+    mapHistoryEventToDiagnosisEvent(event.event_type, event.timestamp, (event.event_data || {}) as Record<string, unknown>),
+  );
 
-  events.slice(0, Math.max(0, maxIndex + 1)).forEach((event) => {
-    const data = event.event_data || {};
-    if (event.event_type === 'agent_trace_start') {
-      const agentId = data.agentId;
-      if (!agentId) return;
-      traces.set(agentId, {
-        id: agentId,
-        name: data.agentName || data.name || agentId,
-        parentId: data.parentAgentId || null,
-        status: 'running',
-        startTime: data.timestamp || event.timestamp,
-        model: data.model,
-        costEstimate: 0,
-        totalTokens: { input: 0, output: 0 },
-        steps: [],
-      });
-    }
-
-    if (event.event_type === 'agent_trace_step') {
-      const agentId = data.agentId;
-      const trace = traces.get(agentId);
-      if (!trace) return;
-
-      const step: ExecutionStep = {
-        id: data.id || data.stepId || `${event.sequence}`,
-        type: data.type || 'llm_thinking',
-        timestamp: data.timestamp || event.timestamp,
-        duration: data.duration,
-        input: data.input,
-        content: data.content,
-        toolName: data.toolName,
-        toolInput: data.toolInput,
-        toolOutput: data.toolOutput,
-        status: data.status,
-        targetAgentId: data.targetAgentId,
-        targetAgentName: data.targetAgentName,
-        taskDescription: data.taskDescription,
-      };
-
-      trace.steps.push(step);
-      trace.costEstimate = (trace.costEstimate || 0) + (data.costEstimate || 0);
-    }
-
-    if (event.event_type === 'agent_trace_complete') {
-      const agentId = data.agentId;
-      const trace = traces.get(agentId);
-      if (!trace) return;
-      trace.status = data.status === 'failed' ? 'failed' : 'success';
-      trace.endTime = data.timestamp || event.timestamp;
-      trace.duration = data.duration || trace.duration;
-      trace.totalTokens = data.totalTokens || trace.totalTokens;
-    }
-  });
-
-  return traces;
+  return createReplayState(normalizedEvents, maxIndex, caseId);
 }
 
 export default function HistoryReplay() {
@@ -93,8 +41,9 @@ export default function HistoryReplay() {
     return () => clearTimeout(timer);
   }, [playing, playIndex, events.length]);
 
-  const traces = useMemo(() => buildTraceMap(events, playIndex), [events, playIndex]);
-  const rootAgentIds = useMemo(() => Array.from(traces.values()).filter((t) => !t.parentId).map((t) => t.id), [traces]);
+  const replayView = useMemo(() => buildReplayView(events, playIndex, sessionId), [events, playIndex, sessionId]);
+  const traces = replayView.traceMap;
+  const rootAgentIds = replayView.rootAgentIds;
 
   useEffect(() => {
     if (!selectedAgentId && rootAgentIds.length > 0) {

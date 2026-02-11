@@ -4,16 +4,15 @@ import AgentHierarchyTree from './AgentHierarchyTree';
 import ExecutionTimeline from './ExecutionTimeline';
 
 export default function AgentTracePanel() {
-  const { traces, rootAgentIds, selectedAgentId, selectAgent, isRunning, replaySnapshot } = useDiagnosisStore();
-
-  const selectedTrace = selectedAgentId ? traces.get(selectedAgentId) : null;
+  const { traceStore, selectAgent, sessionStore } = useDiagnosisStore();
+  const { traceMap, rootAgentIds, selectedAgentId, selectedTrace } = useDiagnosisStore((state) => state.getTraceView());
 
   const summary = useMemo(() => {
     let totalDuration = 0;
     let totalCost = 0;
     const models = new Map<string, number>();
 
-    traces.forEach((trace) => {
+    traceMap.forEach((trace) => {
       totalDuration += trace.duration || trace.latency || 0;
       totalCost += trace.costEstimate || 0;
       if (trace.model) {
@@ -26,9 +25,9 @@ export default function AgentTracePanel() {
       totalCost,
       modelStats: Array.from(models.entries()).map(([model, count]) => ({ model, count })),
     };
-  }, [traces]);
+  }, [traceMap]);
 
-  if (traces.size === 0 && !isRunning) {
+  if (traceMap.size === 0 && !sessionStore.isRunning) {
     return (
       <div className="h-full flex items-center justify-center text-text-muted">
         <div className="text-center">
@@ -39,7 +38,7 @@ export default function AgentTracePanel() {
     );
   }
 
-  if (traces.size === 0 && isRunning) {
+  if (traceMap.size === 0 && sessionStore.isRunning) {
     return (
       <div className="h-full flex items-center justify-center text-text-muted">
         <div className="flex items-center gap-2">
@@ -69,8 +68,8 @@ export default function AgentTracePanel() {
             模型: {summary.modelStats.map((m) => `${m.model}(${m.count})`).join(' · ')}
           </div>
         )}
-        {replaySnapshot && (
-          <div className="mt-2 text-xs text-semantic-success">已生成复盘快照 {new Date(replaySnapshot.snapshotAt).toLocaleTimeString()}</div>
+        {traceStore.replaySnapshot && (
+          <div className="mt-2 text-xs text-semantic-success">已生成复盘快照 {new Date(traceStore.replaySnapshot.snapshotAt).toLocaleTimeString()}</div>
         )}
       </div>
       <div className="h-full flex">
@@ -78,12 +77,7 @@ export default function AgentTracePanel() {
           <div className="p-3 border-b border-border-subtle">
             <h3 className="text-sm font-semibold text-text-main">Agent 层级树</h3>
           </div>
-          <AgentHierarchyTree
-            traces={traces}
-            rootAgentIds={rootAgentIds}
-            selectedAgentId={selectedAgentId}
-            onSelectAgent={selectAgent}
-          />
+          <AgentHierarchyTree traces={traceMap} rootAgentIds={rootAgentIds} selectedAgentId={selectedAgentId} onSelectAgent={selectAgent} />
         </div>
         <div className="flex-1 overflow-hidden">
           <ExecutionTimeline trace={selectedTrace} />
