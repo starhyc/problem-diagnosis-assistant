@@ -9,6 +9,7 @@ from app.core.session_manager import session_manager
 from app.core.event_subscriber import EventSubscriber
 from app.tasks.diagnosis_tasks import run_diagnosis
 from app.core.database import get_db
+from app.contracts.diagnosis_protocol import InvalidDiagnosisEvent, normalize_event
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -40,7 +41,9 @@ class ConnectionManager:
         if session_id in self.active_connections:
             websocket = self.active_connections[session_id]
             try:
-                await websocket.send_json(message)
+                await websocket.send_json(normalize_event(message))
+            except InvalidDiagnosisEvent as e:
+                logger.warning(f"Refused outbound websocket event [{session_id}]: {e}")
             except Exception as e:
                 logger.error(f"Send failed {session_id}: {e}")
                 self.disconnect(session_id)
@@ -143,11 +146,7 @@ async def handle_message(session_id: str, message: dict):
 
 
 async def send_message(session_id: str, message_type: str, data: dict):
-    message = {
-        "type": message_type,
-        "data": data,
-        "timestamp": datetime.now().isoformat()
-    }
+    message = normalize_event({"type": message_type, "data": data, "timestamp": datetime.now().isoformat()})
     await manager.send_message(session_id, message)
 
 
@@ -203,7 +202,7 @@ async def approve_action(session_id: str, data: dict):
 async def reject_action(session_id: str, data: dict):
     action_id = data.get("actionId", "")
     reason = data.get("reason", "")
-    await send_message(session_id, "action_rejected", {
+    await send_message(session_id, "confirmation_rejected", {
         "action_id": action_id,
         "reason": reason,
         "session_id": session_id
