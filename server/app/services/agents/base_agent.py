@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import asyncio
 import uuid
 from datetime import datetime
+import json
 from langchain_core.tools import BaseTool
 from langchain_core.language_models import BaseChatModel
 from app.core.llm_factory import llm_factory
@@ -44,6 +45,70 @@ class BaseAgent(ABC):
             "react": ReActExecutor(),
             "hierarchical": HierarchicalExecutor(),
         }
+
+    @property
+    def required_tool_name(self) -> Optional[str]:
+        """Override in subclasses to enforce a mandatory tool call before LLM reasoning."""
+        return None
+
+    def build_required_tool_input(self, task: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Override in subclasses to define tool parameters."""
+        return {}
+
+    def _truncate_tool_result(self, payload: Any, max_length: int = 1200) -> Tuple[str, bool]:
+        rendered = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+        if len(rendered) <= max_length:
+            return rendered, False
+        return rendered[:max_length] + "...<truncated>", True
+
+    async def run_required_tool(self, task: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute mandatory tool and return a structured trace record."""
+        tool_name = self.required_tool_name
+        if not tool_name:
+            return {}
+
+        session_id = context.get("session_id", "unknown")
+        trace_agent_id = context.get("trace_agent_id")
+        trace_parent_id = context.get("trace_parent_id")
+        tool_input = self.build_required_tool_input(task, context)
+        started = asyncio.get_event_loop().time()
+        success = False
+        error = None
+        raw_result: Any = ""
+        tool = next((t for t in self.tools if getattr(t, "name", "") == tool_name), None)
+
+        if not tool:
+            error = f"required_tool_not_available:{tool_name}"
+        else:
+            try:
+                raw_result = await asyncio.to_thread(tool.invoke, tool_input)
+                success = True
+            except Exception as exc:
+                error = str(exc)
+
+        duration_ms = int((asyncio.get_event_loop().time() - started) * 1000)
+        truncated_result, truncated = self._truncate_tool_result(raw_result if success else error or "")
+        record = {
+            "tool": tool_name,
+            "params": tool_input,
+            "durationMs": duration_ms,
+            "success": success,
+            "error": error,
+            "result": truncated_result,
+            "truncated": truncated,
+        }
+        tool_registry.record_tool_execution(tool_name, self.agent_type, success, duration_ms)
+
+        event_publisher.publish_diagnosis_event(session_id, {
+            "type": "tool_call",
+            "id": str(uuid.uuid4()),
+            "agentId": trace_agent_id,
+            "parentId": trace_parent_id,
+            "agentName": self.agent_name,
+            "toolCall": record,
+            "timestamp": datetime.now().isoformat(),
+        })
+        return record
 
     def _extract_model_name(self) -> str:
         return getattr(self.llm, "model_name", "unknown") if self.llm else "unknown"
@@ -157,6 +222,8 @@ class BaseAgent(ABC):
                     "model": result.get("model", self._extract_model_name()),
                     "costEstimate": result.get("costEstimate", self._estimate_cost(input_tokens, output_tokens)),
                 })
+                result.setdefault("traceAgentId", trace_agent_id)
+                result.setdefault("parentId", trace_parent_id)
                 return result
             except asyncio.TimeoutError:
                 logger.warning(f"{self.agent_name} timeout on attempt {attempt + 1}/{self.retry_count}")
@@ -201,6 +268,8 @@ class BaseAgent(ABC):
                         "agent": self.agent_name,
                         "result": f"Failed after {self.retry_count} attempts: {str(e)}",
                         "status": "error",
+                        "traceAgentId": trace_agent_id,
+                        "parentId": trace_parent_id,
                     }
                 await asyncio.sleep(2 ** attempt)
 
