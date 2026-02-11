@@ -2,29 +2,42 @@ import { applyDiagnosisEvent } from './diagnosisStore';
 import type { DiagnosisEvent } from '../contracts/diagnosisProtocol';
 
 const baseState = {
-  currentCase: {
-    id: 'c1',
-    symptom: 'slow',
-    description: 'slow api',
-    status: 'investigating',
-    leadAgent: 'diagnosis',
-    confidence: 0,
-    messages: [],
-    timeline: [],
-    createdAt: new Date().toISOString(),
+  sessionStore: {
+    currentCase: {
+      id: 'c1',
+      symptom: 'slow',
+      description: 'slow api',
+      status: 'investigating',
+      leadAgent: 'diagnosis',
+      confidence: 0,
+      messages: [],
+      timeline: [],
+      createdAt: new Date().toISOString(),
+    },
+    isRunning: true,
+    proposedAction: null,
+    wsConnected: false,
+    currentAgentType: 'diagnosis',
+    eventLedger: new Set<string>(),
   },
-  isRunning: true,
-  proposedAction: null,
-  wsConnected: false,
-  pendingConfirmation: null,
-  confirmationFlowState: 'idle',
-  currentAgentType: 'diagnosis',
-  traces: new Map(),
-  traceLifecycle: new Map(),
-  selectedAgentId: null,
-  rootAgentIds: [],
-  replaySnapshot: null,
+  confirmationStore: {
+    pendingConfirmation: null,
+    confirmationFlowState: 'idle',
+    eventLedger: new Set<string>(),
+  },
+  traceStore: {
+    traces: new Map(),
+    traceLifecycle: new Map(),
+    selectedAgentId: null,
+    rootAgentIds: [],
+    replaySnapshot: null,
+    eventLedger: new Set<string>(),
+  },
 } as const;
+
+function apply(base: any, event: DiagnosisEvent) {
+  return { ...base, ...applyDiagnosisEvent(base, event) };
+}
 
 export function runDiagnosisStoreContractChecks(): void {
   const progressEvent: DiagnosisEvent = {
@@ -32,18 +45,43 @@ export function runDiagnosisStoreContractChecks(): void {
     timestamp: new Date().toISOString(),
     data: { phase: 'confidence', confidence: 88 },
   };
-  const progressPatch = applyDiagnosisEvent(baseState as never, progressEvent);
-  if ((progressPatch.currentCase as { confidence: number }).confidence !== 88) {
-    throw new Error('contract failed: diagnosis_progress confidence update');
+  const progressState = apply(baseState as never, progressEvent);
+  if (progressState.sessionStore.currentCase.confidence !== 88) {
+    throw new Error('contract failed: sessionStore confidence update');
   }
 
-  const rejectedEvent: DiagnosisEvent = {
-    type: 'confirmation_rejected',
+  const confirmationRequired: DiagnosisEvent = {
+    type: 'confirmation_required',
     timestamp: new Date().toISOString(),
-    data: { confirmationId: 'x', reason: 'risk' },
+    data: { id: 'cf-1', riskLevel: 'R2', message: 'Confirm risk' },
   };
-  const rejectPatch = applyDiagnosisEvent(baseState as never, rejectedEvent);
-  if (rejectPatch.isRunning !== false || rejectPatch.confirmationFlowState !== 'rejected') {
-    throw new Error('contract failed: confirmation_rejected state transition');
+  const confirmationState = apply(baseState as never, confirmationRequired);
+  const confirmationStateDup = apply(confirmationState, confirmationRequired);
+  if (confirmationState.confirmationStore.confirmationFlowState !== 'pending_r2') {
+    throw new Error('contract failed: confirmationStore risk transition');
+  }
+  if (confirmationStateDup.confirmationStore.eventLedger.size !== confirmationState.confirmationStore.eventLedger.size) {
+    throw new Error('contract failed: confirmationStore idempotency');
+  }
+
+  const concurrentStart: DiagnosisEvent = {
+    type: 'agent_trace_start',
+    timestamp: new Date().toISOString(),
+    data: { agentId: 'a-1', agentName: 'Coordinator' },
+  };
+  const concurrentStep: DiagnosisEvent = {
+    type: 'agent_trace_step',
+    timestamp: new Date().toISOString(),
+    data: { agentId: 'a-1', stepId: 's-1', type: 'llm_thinking' },
+  };
+  const firstTraceState = apply(baseState as never, concurrentStart);
+  const secondTraceState = apply(firstTraceState, concurrentStep);
+  const thirdTraceState = apply(secondTraceState, concurrentStep);
+
+  if (!secondTraceState.traceStore.traces.get('a-1')?.steps.length) {
+    throw new Error('contract failed: traceStore concurrent step handling');
+  }
+  if (thirdTraceState.traceStore.traces.get('a-1')?.steps.length !== 1) {
+    throw new Error('contract failed: traceStore duplicate step idempotency');
   }
 }

@@ -32,33 +32,39 @@ async function run() {
 
   await useDiagnosisStore.getState().startDiagnosis('diagnosis', 'symptom', 'desc', 'auto');
   const stateAfterStart = useDiagnosisStore.getState();
-  assert.equal(stateAfterStart.currentCase?.sessionId, 'session-1');
+  assert.equal(stateAfterStart.sessionStore.currentCase?.sessionId, 'session-1');
 
   await useDiagnosisStore.getState().stopDiagnosis();
   assert.deepEqual(stopCalls[0], { session_id: 'session-1' });
 
-  useDiagnosisStore.setState({
-    currentCase: {
-      ...(useDiagnosisStore.getState().currentCase as any),
-      sessionId: 'session-1',
+  useDiagnosisStore.setState((state) => ({
+    sessionStore: {
+      ...state.sessionStore,
+      currentCase: {
+        ...(state.sessionStore.currentCase as any),
+        sessionId: 'session-1',
+      },
+      proposedAction: {
+        id: 'action-1',
+        title: 't',
+        confidence: 90,
+      },
     },
-    proposedAction: {
-      id: 'action-1',
-      title: 't',
-      confidence: 90,
-    },
-  });
+  }));
 
   await useDiagnosisStore.getState().approveAction();
   assert.deepEqual(approveCalls[0], { session_id: 'session-1', action_id: 'action-1' });
 
-  useDiagnosisStore.setState({
-    proposedAction: {
-      id: 'action-2',
-      title: 't2',
-      confidence: 80,
+  useDiagnosisStore.setState((state) => ({
+    sessionStore: {
+      ...state.sessionStore,
+      proposedAction: {
+        id: 'action-2',
+        title: 't2',
+        confidence: 80,
+      },
     },
-  });
+  }));
   await useDiagnosisStore.getState().rejectAction();
   assert.deepEqual(rejectCalls[0], {
     session_id: 'session-1',
