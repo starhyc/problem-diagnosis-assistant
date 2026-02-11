@@ -2,14 +2,13 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.core.database import engine, Base
+from app.core.database import engine
 from app.core.logging_config import setup_logging, get_logger
 from app.api.v1.api import api_router
 
 setup_logging(settings.log_level, settings.log_file)
 logger = get_logger(__name__)
 
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.app_name,
@@ -78,6 +77,8 @@ async def startup_event():
     logger.info(f"日志级别: {settings.log_level}")
     logger.info(f"日志文件: {settings.log_file}")
     logger.info("=" * 50)
+
+    logger.info("Database schema is managed by migrations; skipping ORM create_all.")
 
     # Run migration from environment variables to database
     try:

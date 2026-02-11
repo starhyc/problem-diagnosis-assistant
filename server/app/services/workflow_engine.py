@@ -79,9 +79,14 @@ class DiagnosisWorkflowEngine:
         return f"idempotency:{session_id}:{action_id}:{step_id}"
 
     def _validate_idempotency(self, session_id: str, action_id: str, step_id: str) -> bool:
-        key = self._idempotency_key(session_id, action_id, step_id)
-        accepted = self.redis.set(key, "1", nx=True, ex=3600)
-        return bool(accepted)
+        try:
+            db = next(get_db())
+            return state_manager.register_idempotency_key(session_id, action_id, step_id, db)
+        except Exception as exc:
+            logger.error(
+                f"Failed to persist idempotency key: session={session_id}, action_id={action_id}, step_id={step_id}, error={exc}"
+            )
+            return False
 
     def _set_task_status(self, state: DiagnosisState, task_status: str):
         state_manager.apply_task_status(state, task_status)
