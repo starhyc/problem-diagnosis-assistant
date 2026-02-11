@@ -14,7 +14,7 @@ from app.core.logging_config import get_logger
 from app.core.event_publisher import event_publisher
 from app.core.database import get_db, SessionLocal
 from app.services.state_manager import state_manager
-from app.schemas.events import ConfirmationRiskLevel
+from app.schemas.events import ConfirmationRiskLevel, EvidenceContract
 from app.core.redis_client import redis_client
 from app.models.case import Setting
 from app.services.settings_audit import SettingsAuditService
@@ -54,6 +54,9 @@ class DiagnosisState(TypedDict, total=False):
     trace_root_id: str
     task_status: str
     snapshot_data: Dict[str, Any]
+    evidence_goal: str
+    allowed_tools: List[str]
+    stop_conditions: List[str]
 
 
 class DiagnosisWorkflowEngine:
@@ -91,6 +94,76 @@ class DiagnosisWorkflowEngine:
 
     def _set_task_status(self, state: DiagnosisState, task_status: str):
         state_manager.apply_task_status(state, task_status)
+
+    def _build_objective(self, state: DiagnosisState, phase: str, default_tools: Optional[List[str]] = None) -> Dict[str, Any]:
+        context = state.get("snapshot_data", {}).get("context", {}) if isinstance(state.get("snapshot_data"), dict) else {}
+        evidence_goal = state.get("evidence_goal") or context.get("evidence_goal") or f"围绕症状[{state.get('symptom', '')}]收集可复现证据"
+        allowed_tools = state.get("allowed_tools") or context.get("allowed_tools") or default_tools or ["elk_query", "git_search", "db_query"]
+        stop_conditions = state.get("stop_conditions") or context.get("stop_conditions") or [
+            "confidence>=85",
+            "至少两类独立证据一致",
+            "出现可执行修复建议",
+        ]
+        state["evidence_goal"] = evidence_goal
+        state["allowed_tools"] = allowed_tools
+        state["stop_conditions"] = stop_conditions
+        return {
+            "evidence_goal": evidence_goal,
+            "allowed_tools": allowed_tools,
+            "stop_conditions": stop_conditions,
+            "phase": phase,
+        }
+
+    def _should_stop(self, state: DiagnosisState) -> bool:
+        if state.get("confidence", 0) >= 85:
+            return True
+        return any(condition == "manual_stop" for condition in state.get("stop_conditions", []))
+
+    def _select_specialists(self, objective: Dict[str, Any]) -> List[str]:
+        mapping = {
+            "elk_query": ["log", "metric"],
+            "git_search": ["code"],
+            "db_query": ["knowledge"],
+        }
+        selected = []
+        for tool in objective.get("allowed_tools", []):
+            selected.extend(mapping.get(tool, []))
+        if not selected:
+            return ["log", "metric"]
+        return list(dict.fromkeys(selected))
+
+    def _append_chain_link(self, state: DiagnosisState, link_type: str, payload: Dict[str, Any]):
+        snapshot_data = state.setdefault("snapshot_data", {})
+        chain = snapshot_data.setdefault("decision_evidence_chain", {"nodes": [], "edges": []})
+        node_id = str(uuid.uuid4())
+        chain["nodes"].append({"id": node_id, "type": link_type, "payload": payload, "timestamp": datetime.now().isoformat()})
+        if len(chain["nodes"]) > 1:
+            chain["edges"].append({"from": chain["nodes"][-2]["id"], "to": node_id})
+
+    def _append_evidence_contract(
+        self,
+        state: DiagnosisState,
+        evidence_type: str,
+        agent_result: Dict[str, Any],
+        source: str,
+        reproducible_query: str,
+        confidence_contribution: float,
+    ):
+        contract = EvidenceContract(
+            source=source,
+            reproducible_query=reproducible_query,
+            confidence_contribution=confidence_contribution,
+            summary=str(agent_result.get("result", ""))[:300],
+            payload={"agent": agent_result.get("agent"), "status": agent_result.get("status"), "failure_explanation": agent_result.get("failure_explanation")},
+        )
+        state.setdefault("evidence", []).append(
+            {
+                "type": evidence_type,
+                "data": agent_result,
+                "contract": contract.model_dump(mode="json"),
+            }
+        )
+        self._append_chain_link(state, "evidence", {"evidence_type": evidence_type, "source": source, "summary": contract.summary})
 
     def _persist_node_snapshot(
         self,
@@ -513,26 +586,34 @@ class DiagnosisWorkflowEngine:
         if state.get("cancelled"):
             return state
 
+        objective = self._build_objective(state, "plan_execute", ["elk_query", "git_search", "db_query"])
         state["current_phase"] = "plan"
         planner_result = await self.coordinator.execute_with_timeout(
             "Create a diagnosis execution plan",
             {
                 "symptom": state["symptom"],
-                "goal": "产出最小可用执行计划",
+                "goal": objective["evidence_goal"],
+                "available_agents": self._select_specialists(objective),
+                "stop_condition": " ; ".join(objective["stop_conditions"]),
+                **objective,
                 **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "Create diagnosis plan", "plan"),
             },
             mode=state.get("mode"),
         )
         state["messages"].append(planner_result)
+        self._append_chain_link(state, "decision", planner_result.get("coordination_decision", {}))
         self._emit_tool_call_trace(state, planner_result)
 
         state["current_phase"] = "execute"
         state = await self._parallel_analysis(state)
         state = await self._coordinator_synthesis(state)
+        if not self._should_stop(state):
+            state = await self._knowledge_match(state)
         state = await self._final_decision(state)
         return state
 
     async def _run_react(self, state: DiagnosisState) -> DiagnosisState:
+        objective = self._build_objective(state, "react", ["elk_query", "git_search"])
         max_iterations = 4
         stagnation_limit = 2
         no_increment_rounds = 0
@@ -549,11 +630,16 @@ class DiagnosisWorkflowEngine:
                     "symptom": state["symptom"],
                     "current_confidence": state.get("confidence", 0),
                     "iteration": idx + 1,
+                    "goal": objective["evidence_goal"],
+                    "available_agents": self._select_specialists(objective),
+                    "stop_condition": " ; ".join(objective["stop_conditions"]),
+                    **objective,
                     **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "ReAct reasoning", "reason"),
                 },
                 mode=state.get("mode"),
             )
             state["messages"].append(reasoning)
+            self._append_chain_link(state, "decision", reasoning.get("coordination_decision", {}))
             self._emit_tool_call_trace(state, reasoning)
 
             state["current_phase"] = f"react_{idx + 1}_act"
@@ -603,7 +689,7 @@ class DiagnosisWorkflowEngine:
                 state["mode"] = DiagnosisMode.PLAN_EXECUTE.value
                 return await self._run_plan_execute(state)
 
-            if state.get("confidence", 0) >= 80:
+            if self._should_stop(state):
                 break
 
         state = await self._final_decision(state)
@@ -613,78 +699,103 @@ class DiagnosisWorkflowEngine:
         if state.get("cancelled"):
             return state
 
+        objective = self._build_objective(state, "hierarchical", ["elk_query", "git_search", "db_query"])
+        selected_specialists = self._select_specialists(objective)
+
         state["current_phase"] = "orchestrate"
         orchestrator_result = await self.coordinator.execute_with_timeout(
             "Delegate specialist tasks for diagnosis",
             {
                 "symptom": state["symptom"],
-                "specialists": ["log", "metric", "code", "knowledge"],
+                "specialists": self._select_specialists(objective),
+                "goal": objective["evidence_goal"],
+                "stop_condition": " ; ".join(objective["stop_conditions"]),
+                **objective,
                 **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "Delegate specialists", "orchestrate"),
             },
             mode=state.get("mode"),
         )
         state["messages"].append(orchestrator_result)
+        self._append_chain_link(state, "decision", orchestrator_result.get("coordination_decision", {}))
         self._emit_tool_call_trace(state, orchestrator_result)
 
         state["current_phase"] = "specialist_execute"
-        log_task = self.log_agent.execute_with_timeout(
-            "Analyze logs",
-            {
-                "symptom": state["symptom"],
-                **self._trace_context(state, "Log Analysis Agent", state.get("trace_root_id"), "Analyze logs", "specialist"),
-            },
-            mode=state.get("mode"),
-        )
-        metric_task = self.metric_agent.execute_with_timeout(
-            "Analyze system metrics",
-            {
-                "symptom": state["symptom"],
-                **self._trace_context(state, "Metric Analysis Agent", state.get("trace_root_id"), "Analyze system metrics", "specialist"),
-            },
-            mode=state.get("mode"),
-        )
-        code_task = self.code_agent.execute_with_timeout(
-            "Analyze code and configuration",
-            {
-                "symptom": state["symptom"],
-                **self._trace_context(state, "Code Analysis Agent", state.get("trace_root_id"), "Analyze code and configuration", "specialist"),
-            },
-            mode=state.get("mode"),
-        )
-        knowledge_task = self.knowledge_agent.execute_with_timeout(
-            "Find similar cases",
-            {
-                "symptom": state["symptom"],
-                **self._trace_context(state, "Knowledge Agent", state.get("trace_root_id"), "Find similar cases", "specialist"),
-            },
-            mode=state.get("mode"),
-        )
+        specialist_tasks = []
+        if "log" in selected_specialists:
+            specialist_tasks.append(self.log_agent.execute_with_timeout(
+                "Analyze logs",
+                {
+                    "symptom": state["symptom"],
+                    **self._trace_context(state, "Log Analysis Agent", state.get("trace_root_id"), "Analyze logs", "specialist"),
+                },
+                mode=state.get("mode"),
+            ))
+        if "metric" in selected_specialists:
+            specialist_tasks.append(self.metric_agent.execute_with_timeout(
+                "Analyze system metrics",
+                {
+                    "symptom": state["symptom"],
+                    **self._trace_context(state, "Metric Analysis Agent", state.get("trace_root_id"), "Analyze system metrics", "specialist"),
+                },
+                mode=state.get("mode"),
+            ))
+        if "code" in selected_specialists:
+            specialist_tasks.append(self.code_agent.execute_with_timeout(
+                "Analyze code and configuration",
+                {
+                    "symptom": state["symptom"],
+                    **self._trace_context(state, "Code Analysis Agent", state.get("trace_root_id"), "Analyze code and configuration", "specialist"),
+                },
+                mode=state.get("mode"),
+            ))
+        if "knowledge" in selected_specialists:
+            specialist_tasks.append(self.knowledge_agent.execute_with_timeout(
+                "Find similar cases",
+                {
+                    "symptom": state["symptom"],
+                    **self._trace_context(state, "Knowledge Agent", state.get("trace_root_id"), "Find similar cases", "specialist"),
+                },
+                mode=state.get("mode"),
+            ))
 
-        log_result, metric_result, code_result, knowledge_result = await asyncio.gather(
-            log_task, metric_task, code_task, knowledge_task
-        )
-        specialist_outputs = [log_result, metric_result, code_result, knowledge_result]
+        specialist_outputs = await asyncio.gather(*specialist_tasks) if specialist_tasks else []
         state["messages"].extend(specialist_outputs)
         self._emit_tool_call_trace_batch(state, specialist_outputs)
-        state["evidence"].extend(
-            [
-                {"type": "log", "data": log_result},
-                {"type": "metric", "data": metric_result},
-                {"type": "code", "data": code_result},
-                {"type": "knowledge", "data": knowledge_result},
-            ]
-        )
+        for output in specialist_outputs:
+            agent_name = output.get("agent", "")
+            evidence_type = "log"
+            reproducible_query = state.get("symptom", "")
+            source = "specialist"
+            if "Metric" in agent_name:
+                evidence_type = "metric"
+                source = "metric_agent"
+            elif "Code" in agent_name:
+                evidence_type = "code"
+                source = "code_agent"
+            elif "Knowledge" in agent_name:
+                evidence_type = "knowledge"
+                source = "knowledge_agent"
+            elif "Log" in agent_name:
+                source = "log_agent"
+            tool_calls = output.get("toolCalls") or []
+            if tool_calls:
+                reproducible_query = str(tool_calls[0].get("params", state.get("symptom", "")))
+            self._append_evidence_contract(state, evidence_type, output, source, reproducible_query, 0.2)
 
         state["current_phase"] = "aggregate"
         aggregate_result = await self.coordinator.execute_with_timeout(
             "Aggregate specialist outputs into final diagnosis",
             {
                 "specialist_outputs": specialist_outputs,
+                "goal": objective["evidence_goal"],
+                "stop_condition": " ; ".join(objective["stop_conditions"]),
+                **objective,
                 **self._trace_context(state, "Coordinator Agent", state.get("trace_root_id"), "Aggregate specialists", "aggregate"),
             },
             mode=state.get("mode"),
         )
         state["messages"].append(aggregate_result)
+        self._append_chain_link(state, "decision", aggregate_result.get("coordination_decision", {}))
         self._emit_tool_call_trace(state, aggregate_result)
         state["confidence"] = max(state.get("confidence", 0), 85)
         state = await self._final_decision(state)
@@ -707,6 +818,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        self._append_chain_link(state, "conclusion", {"result": str(result.get("result", ""))[:400], "confidence": state.get("confidence", 0)})
         self._emit_tool_call_trace(state, result)
         state["confidence"] = 50
         return state
@@ -774,30 +886,35 @@ class DiagnosisWorkflowEngine:
             return state
 
         root_id = state.get("trace_root_id")
-        log_task = self.log_agent.execute_with_timeout(
-            state["symptom"],
-            {"phase": "analysis", **self._trace_context(state, "Log Analysis Agent", root_id, state["symptom"], "analysis")},
-            mode=state.get("mode"),
-        )
-        metric_task = self.metric_agent.execute_with_timeout(
-            state["symptom"],
-            {"phase": "analysis", **self._trace_context(state, "Metric Analysis Agent", root_id, state["symptom"], "analysis")},
-            mode=state.get("mode"),
-        )
-        log_result, metric_result = await asyncio.gather(log_task, metric_task)
+        objective = self._build_objective(state, "analysis", ["elk_query"])
+        tasks = []
+        evidence_pairs = []
+        if "elk_query" in objective.get("allowed_tools", []):
+            tasks.append(self.log_agent.execute_with_timeout(
+                state["symptom"],
+                {"phase": "analysis", **self._trace_context(state, "Log Analysis Agent", root_id, state["symptom"], "analysis")},
+                mode=state.get("mode"),
+            ))
+            evidence_pairs.append(("log", "log_agent", 0.25))
+            tasks.append(self.metric_agent.execute_with_timeout(
+                state["symptom"],
+                {"phase": "analysis", **self._trace_context(state, "Metric Analysis Agent", root_id, state["symptom"], "analysis")},
+                mode=state.get("mode"),
+            ))
+            evidence_pairs.append(("metric", "metric_agent", 0.25))
 
+        results = await asyncio.gather(*tasks) if tasks else []
         base_evidence_len = len(state.get("evidence", []))
-        state["messages"].extend([log_result, metric_result])
-        self._emit_tool_call_trace_batch(state, [log_result, metric_result])
-        state["evidence"].extend([
-            {"type": "log", "data": log_result},
-            {"type": "metric", "data": metric_result},
-        ])
+        state["messages"].extend(results)
+        self._emit_tool_call_trace_batch(state, results)
+        for (evidence_type, source, contribution), agent_result in zip(evidence_pairs, results):
+            query = str(((agent_result.get("toolCalls") or [{}])[0]).get("params", state.get("symptom", "")))
+            self._append_evidence_contract(state, evidence_type, agent_result, source, query, contribution)
         self._persist_node_snapshot(
             state,
             "parallel_analysis",
             {"symptom": state.get("symptom")},
-            {"log_result": log_result, "metric_result": metric_result},
+            {"results": results},
             list(range(base_evidence_len, len(state.get("evidence", [])))),
         )
         return state
@@ -817,7 +934,8 @@ class DiagnosisWorkflowEngine:
         )
         state["messages"].append(result)
         self._emit_tool_call_trace(state, result)
-        state["evidence"].append({"type": "code", "data": result})
+        code_query = str(((result.get("toolCalls") or [{}])[0]).get("params", state.get("symptom", "")))
+        self._append_evidence_contract(state, "code", result, "code_agent", code_query, 0.2)
         self._persist_node_snapshot(
             state,
             "code_analysis",
@@ -937,6 +1055,8 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        knowledge_query = str(((result.get("toolCalls") or [{}])[0]).get("params", state.get("symptom", "")))
+        self._append_evidence_contract(state, "knowledge", result, "knowledge_agent", knowledge_query, 0.25)
         self._emit_tool_call_trace(state, result)
         state["confidence"] = 85
         self._persist_node_snapshot(
@@ -962,6 +1082,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        self._append_chain_link(state, "conclusion", {"result": str(result.get("result", ""))[:400], "confidence": state.get("confidence", 0)})
         self._emit_tool_call_trace(state, result)
         state["current_phase"] = "completed"
         self._persist_node_snapshot(

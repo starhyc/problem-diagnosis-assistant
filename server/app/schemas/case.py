@@ -163,6 +163,7 @@ class HistoryDetailResponse(BaseModel):
     event_count: int
     first_event_at: Optional[datetime] = None
     last_event_at: Optional[datetime] = None
+    decision_evidence_chain: Dict[str, Any] = Field(default_factory=dict)
     events: List[HistoryEventResponse]
 
 

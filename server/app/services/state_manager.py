@@ -408,6 +408,32 @@ class StateManager:
 
         return sessions
 
+    def _build_decision_evidence_chain(self, snapshot_data: Dict[str, Any], events: List[Dict[str, Any]]) -> Dict[str, Any]:
+        chain = (snapshot_data or {}).get("decision_evidence_chain")
+        if isinstance(chain, dict) and chain.get("nodes"):
+            return chain
+
+        nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, str]] = []
+        for event in events:
+            payload = event.get("event_data") or {}
+            event_type = event.get("event_type")
+            node_type = None
+            if event_type in {"agent_dispatch", "workflow_mode_finalized"}:
+                node_type = "decision"
+            elif event_type in {"tool_call", "evidence_added"}:
+                node_type = "evidence"
+            elif event_type in {"diagnosis_completed"}:
+                node_type = "conclusion"
+            if not node_type:
+                continue
+            node_id = f"event-{event.get('sequence')}"
+            nodes.append({"id": node_id, "type": node_type, "payload": payload, "timestamp": event.get("timestamp")})
+            if len(nodes) > 1:
+                edges.append({"from": nodes[-2]["id"], "to": node_id})
+
+        return {"nodes": nodes, "edges": edges}
+
     def get_session_detail(self, session_id: str, db: Session) -> Optional[Dict[str, Any]]:
         from sqlalchemy import text
 
@@ -432,6 +458,7 @@ class StateManager:
         else:
             snapshot_data = snapshot_row.snapshot_data
 
+        decision_chain = self._build_decision_evidence_chain(snapshot_data, events)
         return {
             "session_id": snapshot_row.session_id,
             "snapshot_version": snapshot_row.snapshot_version,
@@ -439,6 +466,7 @@ class StateManager:
             "event_count": len(events),
             "first_event_at": events[0]["timestamp"] if events else None,
             "last_event_at": events[-1]["timestamp"] if events else None,
+            "decision_evidence_chain": decision_chain,
             "events": events,
         }
 
