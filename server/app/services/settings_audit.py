@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.database import SessionLocal
 from app.models.case import Setting
+from app.schemas.events import ConfirmationRiskLevel
 
 
 class SettingsAuditService:
@@ -36,7 +37,9 @@ class SettingsAuditService:
         if session_id:
             payload["session_id"] = session_id
         if risk_level:
-            payload["risk_level"] = risk_level
+            normalized_risk = risk_level if risk_level in {level.value for level in ConfirmationRiskLevel} else None
+            if normalized_risk:
+                payload["risk_level"] = normalized_risk
 
         setting_id = f"{module}-{int(datetime.utcnow().timestamp() * 1000)}"
 

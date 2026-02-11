@@ -48,7 +48,7 @@ export interface ConfirmationRequired {
   description?: string;
   options?: Array<{ label: string; value: string }>;
   defaultOption?: string;
-  riskLevel?: 'low' | 'medium' | 'high' | 'critical' | 'R1' | 'R2' | 'R3';
+  riskLevel?: 'R0' | 'R1' | 'R2' | 'R3';
   impactScope?: string;
   rollbackPlan?: string;
   approverRoles?: string[];

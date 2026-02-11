@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import type { ConfirmationRequired } from '../../lib/websocket';
+import { formatRiskLevel, mapRiskLevelToUiLevel } from '../../lib/riskLevel';
 
 interface ConfirmationDialogProps {
   confirmation: ConfirmationRequired;
@@ -35,11 +36,7 @@ export default function ConfirmationDialog({
   const riskLevelColors = {
     low: 'bg-semantic-success/10 text-semantic-success',
     medium: 'bg-semantic-warning/10 text-semantic-warning',
-    high: 'bg-semantic-danger/10 text-semantic-danger',
-    critical: 'bg-semantic-danger text-white',
-    R1: 'bg-semantic-success/10 text-semantic-success',
-    R2: 'bg-semantic-warning/10 text-semantic-warning',
-    R3: 'bg-semantic-danger text-white',
+    high: 'bg-semantic-danger text-white',
   };
 
   const displayTimeout = useMemo(() => {
@@ -54,7 +51,7 @@ export default function ConfirmationDialog({
         <div className="p-6 border-b border-border-subtle">
           <div className="flex items-start gap-3">
             <div
-              className={`p-2 rounded-lg ${riskLevelColors[confirmation.riskLevel || 'low']}`}
+              className={`p-2 rounded-lg ${riskLevelColors[mapRiskLevelToUiLevel(confirmation.riskLevel)]}`}
             >
               <AlertCircle className="w-6 h-6" />
             </div>
@@ -69,7 +66,7 @@ export default function ConfirmationDialog({
               <div className="grid grid-cols-2 gap-3 mt-3 text-xs text-text-muted">
                 <div className="bg-bg-elevated/40 rounded p-2">
                   <div className="font-medium text-text-main">风险等级</div>
-                  <div>{confirmation.riskLevel || 'low'}</div>
+                  <div>{formatRiskLevel(confirmation.riskLevel)}</div>
                 </div>
                 <div className="bg-bg-elevated/40 rounded p-2">
                   <div className="font-medium text-text-main">影响范围</div>

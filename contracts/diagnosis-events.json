@@ -4,37 +4,66 @@
   "version": "1.0.0",
   "description": "Canonical websocket/pubsub protocol for diagnosis lifecycle events.",
   "envelope": {
-    "required": ["type", "timestamp"],
+    "required": [
+      "type",
+      "timestamp"
+    ],
     "properties": {
-      "type": { "type": "string" },
-      "timestamp": { "type": "string", "format": "date-time" },
-      "data": { "type": "object" }
+      "type": {
+        "type": "string"
+      },
+      "timestamp": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "data": {
+        "type": "object"
+      }
     }
   },
   "events": {
     "diagnosis_started": {
       "description": "Diagnosis run accepted and started",
-      "requiredDataFields": ["session_id"]
+      "requiredDataFields": [
+        "session_id"
+      ]
     },
     "diagnosis_progress": {
       "description": "Unified progress stream for timeline/confidence/trace/progress",
-      "requiredDataFields": ["session_id", "phase"]
+      "requiredDataFields": [
+        "session_id",
+        "phase"
+      ]
     },
     "confirmation_required": {
       "description": "Runtime asks human confirmation for risky action",
-      "requiredDataFields": ["id", "message"]
+      "requiredDataFields": [
+        "id",
+        "message",
+        "riskLevel"
+      ]
     },
     "confirmation_rejected": {
       "description": "Human rejected action or workflow rejected confirmation",
-      "requiredDataFields": ["confirmationId", "reason"]
+      "requiredDataFields": [
+        "confirmationId",
+        "reason",
+        "riskLevel"
+      ]
     },
     "diagnosis_completed": {
       "description": "Diagnosis workflow completed successfully",
-      "requiredDataFields": ["session_id", "summary"]
+      "requiredDataFields": [
+        "session_id",
+        "summary"
+      ]
     },
     "diagnosis_failed": {
       "description": "Diagnosis workflow failed",
-      "requiredDataFields": ["session_id", "error"]
+      "requiredDataFields": [
+        "session_id",
+        "error"
+      ]
     },
     "heartbeat": {
       "description": "Connection keepalive",
@@ -42,7 +71,32 @@
     },
     "replay_snapshot": {
       "description": "Event replay snapshot for recovery and UI replay",
-      "requiredDataFields": ["snapshotAt", "traces"]
+      "requiredDataFields": [
+        "snapshotAt",
+        "traces"
+      ]
+    },
+    "confirmation_status": {
+      "description": "Confirmation status feedback",
+      "requiredDataFields": [
+        "confirmationId",
+        "status",
+        "riskLevel"
+      ]
+    }
+  },
+  "riskLevelStandard": {
+    "canonical": [
+      "R0",
+      "R1",
+      "R2",
+      "R3"
+    ],
+    "uiMapping": {
+      "R0": "low",
+      "R1": "low",
+      "R2": "medium",
+      "R3": "high"
     }
   }
 }
