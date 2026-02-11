@@ -1,13 +1,16 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, EmailStr
+
+from app.core.roles import UserRole
 
 
 class UserBase(BaseModel):
     username: str
     email: EmailStr
     display_name: str
-    role: str = "viewer"
+    role: UserRole = UserRole.VIEWER
 
 
 class UserCreate(UserBase):

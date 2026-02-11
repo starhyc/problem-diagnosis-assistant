@@ -35,7 +35,7 @@ async def register(user_data: UserCreate):
         email=user_data.email,
         hashed_password=hashed_password,
         display_name=user_data.display_name,
-        role=user_data.role
+        role=user_data.role.value
     )
 
     logger.info(f"用户注册成功: username={user_data.username}, role={user_data.role}")

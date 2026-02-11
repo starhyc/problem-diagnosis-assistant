@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
+from app.core.roles import UserRole
 from app.core.security import get_password_hash
 from app.middleware.permissions import user_management_permission
 from app.repositories.user_repository import UserRepository
@@ -17,7 +18,7 @@ class AdminUserCreateRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     display_name: str = Field(min_length=1, max_length=100)
-    role: str = Field(default="viewer")
+    role: UserRole = Field(default=UserRole.VIEWER)
 
 
 class UserStatusRequest(BaseModel):
@@ -25,7 +26,7 @@ class UserStatusRequest(BaseModel):
 
 
 class UserRoleRequest(BaseModel):
-    role: str
+    role: UserRole
 
 
 @router.get("/users", response_model=list[UserResponse])
@@ -46,7 +47,7 @@ def admin_create_user(data: AdminUserCreateRequest, user: UserResponse = Depends
         email=data.email,
         display_name=data.display_name,
         hashed_password=get_password_hash(data.password),
-        role=data.role,
+        role=data.role.value,
         is_active=True,
     )
 
@@ -83,13 +84,13 @@ def update_user_role(user_id: int, data: UserRoleRequest, user: UserResponse = D
     if not target:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    updated = user_repo.update(user_id, role=data.role)
+    updated = user_repo.update(user_id, role=data.role.value)
     audit_service.record(
         module="user-management",
         action="change-role",
         actor=user.username,
         target_id=target.username,
-        detail={"from": target.role, "to": data.role},
+        detail={"from": target.role, "to": data.role.value},
     )
     return updated
 

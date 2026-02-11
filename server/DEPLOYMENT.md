@@ -24,8 +24,28 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 OPENAI_API_KEY=your-openai-api-key
 
 # Security
-SECRET_KEY=generate-a-secure-random-key
+SECRET_KEY=at-least-32-random-characters
 ```
+
+## Minimum Security Baseline
+
+Production startup validation now enforces the following minimum configuration:
+
+```bash
+ENVIRONMENT=production
+DEBUG=False
+SECRET_KEY=<at-least-32-random-characters>
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db>
+REDIS_URL=redis://<host>:6379/0
+CORS_ORIGINS=https://your-frontend.example.com
+```
+
+Rules enforced at startup:
+- `SECRET_KEY` is **required** in production and must be at least 32 characters.
+- `DATABASE_URL` must be a valid database URL (PostgreSQL/SQLite format).
+- `REDIS_URL` must use `redis://` or `rediss://` and include a host.
+- `CORS_ORIGINS` must contain valid `http(s)` origins only.
+- `DEBUG` defaults to `False` and should be enabled explicitly only for local development.
 
 ## Local Development with Docker Compose
 
