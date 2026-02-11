@@ -13,6 +13,8 @@ from app.core.database import SessionLocal
 from app.models.case import Setting
 from app.services.skill_runtime import (
     ApprovalRequiredError,
+    PolicyViolationError,
+    RuntimeUnavailableError,
     SandboxPolicy,
     SkillPackageValidator,
     SkillValidationError,
@@ -28,7 +30,12 @@ class SkillLoader:
         self.skills_root.mkdir(parents=True, exist_ok=True)
         self.validator = SkillPackageValidator()
         self.runtime_mode = os.getenv("SKILL_RUNTIME_MODE", "restricted").lower()
-        self.runtime = create_runtime(self.runtime_mode)
+        self.runtime = None
+        self.runtime_error: str | None = None
+        try:
+            self.runtime = create_runtime(self.runtime_mode)
+        except RuntimeUnavailableError as exc:
+            self.runtime_error = str(exc)
 
     def list_skills(self) -> List[Dict[str, Any]]:
         with SessionLocal() as db:
@@ -74,7 +81,7 @@ class SkillLoader:
                 "version": metadata.get("version", "0.1.0"),
                 "entrypoint": metadata.get("entrypoint", "run.py"),
                 "permissions": metadata.get("permissions", {}),
-                "runtime_mode": self.runtime.metadata.mode,
+                "runtime_mode": self.runtime.metadata.mode if self.runtime else self.runtime_mode,
                 "path": str(self.skills_root / skill_id),
                 "status": "running",
                 "last_test_at": None,
@@ -122,6 +129,19 @@ class SkillLoader:
             return self._to_dict(row)
 
     def execute_skill(self, skill_id: str, approval_granted: bool = False) -> Dict[str, Any]:
+        if self.runtime is None:
+            return {
+                "status": "failed",
+                "error_code": "runtime_unavailable",
+                "message": self.runtime_error or "Runtime unavailable",
+                "sandbox": {
+                    "mode": self.runtime_mode,
+                    "production_safe": False,
+                    "label": "runtime unavailable",
+                    "policy": {},
+                },
+            }
+
         with SessionLocal() as db:
             row = self._get_skill(db, skill_id)
             config = json.loads(row.config) if row.config else {}
@@ -151,7 +171,8 @@ class SkillLoader:
             return result
         except ApprovalRequiredError as exc:
             return {
-                "status": "approval_required",
+                "status": "failed",
+                "error_code": "approval_required",
                 "message": str(exc),
                 "requested_permissions": policy.requested_permissions(),
                 "sandbox": {
@@ -161,6 +182,56 @@ class SkillLoader:
                     "policy": policy.as_dict(),
                 },
             }
+        except PolicyViolationError as exc:
+            return {
+                "status": "failed",
+                "error_code": "policy_violation",
+                "message": str(exc),
+                "requested_permissions": policy.requested_permissions(),
+                "sandbox": {
+                    "mode": self.runtime.metadata.mode,
+                    "production_safe": self.runtime.metadata.production_safe,
+                    "label": self.runtime.metadata.label,
+                    "policy": policy.as_dict(),
+                },
+            }
+        except RuntimeUnavailableError as exc:
+            return {
+                "status": "failed",
+                "error_code": "runtime_unavailable",
+                "message": str(exc),
+                "requested_permissions": policy.requested_permissions(),
+                "sandbox": {
+                    "mode": self.runtime.metadata.mode,
+                    "production_safe": self.runtime.metadata.production_safe,
+                    "label": self.runtime.metadata.label,
+                    "policy": policy.as_dict(),
+                },
+            }
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "error_code": "execution_failed",
+                "message": str(exc),
+                "requested_permissions": policy.requested_permissions(),
+                "sandbox": {
+                    "mode": self.runtime.metadata.mode,
+                    "production_safe": self.runtime.metadata.production_safe,
+                    "label": self.runtime.metadata.label,
+                    "policy": policy.as_dict(),
+                },
+            }
+
+    def _resolve_extract_target(self, extract_dir: Path, member_name: str) -> Path:
+        member_path = Path(member_name)
+        if member_path.is_absolute():
+            raise ValueError(f"Unsafe archive member path: {member_name}")
+
+        target = (extract_dir / member_path).resolve()
+        extract_root = extract_dir.resolve()
+        if extract_root != target and extract_root not in target.parents:
+            raise ValueError(f"Archive member escapes extraction root: {member_name}")
+        return target
 
     def test_skill(self, skill_id: str) -> Dict[str, Any]:
         with SessionLocal() as db:
@@ -184,12 +255,18 @@ class SkillLoader:
     def _extract_archive(self, src_path: Path, extract_dir: Path) -> None:
         if src_path.suffix.lower() == ".zip":
             with zipfile.ZipFile(src_path, "r") as zf:
-                zf.extractall(extract_dir)
+                for member in zf.infolist():
+                    self._resolve_extract_target(extract_dir, member.filename)
+                    zf.extract(member, path=extract_dir)
             return
 
         if src_path.suffix.lower() in {".gz", ".tgz", ".tar"}:
             with tarfile.open(src_path, "r:*") as tf:
-                tf.extractall(extract_dir)
+                for member in tf.getmembers():
+                    self._resolve_extract_target(extract_dir, member.name)
+                    if member.islnk() or member.issym():
+                        raise ValueError(f"Links are not allowed in skill package: {member.name}")
+                    tf.extract(member, path=extract_dir)
             return
 
         raise ValueError("Unsupported archive format")
@@ -211,7 +288,8 @@ class SkillLoader:
 
     def _to_dict(self, row: Setting) -> Dict[str, Any]:
         config = json.loads(row.config) if row.config else {}
-        runtime_mode = config.get("runtime_mode", self.runtime.metadata.mode)
+        fallback_mode = self.runtime.metadata.mode if self.runtime else self.runtime_mode
+        runtime_mode = config.get("runtime_mode", fallback_mode)
         return {
             "id": row.setting_id,
             "name": row.name,
