@@ -231,6 +231,27 @@ export interface ActionRejectRequest {
   reason?: string;
 }
 
+export interface StartDiagnosisResponse {
+  status: string;
+  session_id: string;
+  task_id: string;
+  message: string;
+}
+
+export interface DiagnosisSessionControlResponse {
+  status: string;
+  session_id: string;
+  message: string;
+}
+
+export interface DiagnosisActionDecisionResponse {
+  status: string;
+  session_id: string;
+  action_id: string;
+  message: string;
+  reason?: string;
+}
+
 export interface SkillPackage {
   id: string;
   name: string;
@@ -336,7 +357,7 @@ export const dashboardApi = {
 
 export const investigationApi = {
   async getInvestigationData(): Promise<InvestigationData> {
-    return request<InvestigationData>('/investigation');
+    return request<InvestigationData>('/investigation/demo');
   },
 
   async startDiagnosis(
@@ -346,8 +367,8 @@ export const investigationApi = {
     files?: Record<string, string[]>,
     context?: any,
     mode: string = 'auto'
-  ): Promise<any> {
-    return request('/investigation/start', {
+  ): Promise<StartDiagnosisResponse> {
+    return request<StartDiagnosisResponse>('/investigation/control/start', {
       method: 'POST',
       body: JSON.stringify({
         agent_type: agentType,
@@ -360,26 +381,26 @@ export const investigationApi = {
     });
   },
 
-  async stopDiagnosis(payload: StopDiagnosisRequest): Promise<any> {
-    return request('/investigation/stop', {
+  async stopDiagnosis(payload: StopDiagnosisRequest): Promise<DiagnosisSessionControlResponse> {
+    return request<DiagnosisSessionControlResponse>('/investigation/control/stop', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   },
 
   async getProposedAction(): Promise<{ title: string; confidence: number; description: string }> {
-    return request('/investigation/action');
+    return request('/investigation/demo/action');
   },
 
-  async approveAction(payload: ActionApprovalRequest): Promise<any> {
-    return request('/investigation/action/approve', {
+  async approveAction(payload: ActionApprovalRequest): Promise<DiagnosisActionDecisionResponse> {
+    return request<DiagnosisActionDecisionResponse>('/investigation/control/action/approve', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   },
 
-  async rejectAction(payload: ActionRejectRequest): Promise<any> {
-    return request('/investigation/action/reject', {
+  async rejectAction(payload: ActionRejectRequest): Promise<DiagnosisActionDecisionResponse> {
+    return request<DiagnosisActionDecisionResponse>('/investigation/control/action/reject', {
       method: 'POST',
       body: JSON.stringify(payload),
     });

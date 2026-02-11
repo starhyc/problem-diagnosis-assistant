@@ -9,18 +9,18 @@ async function run() {
   const approveCalls: any[] = [];
   const rejectCalls: any[] = [];
 
-  investigationApi.startDiagnosis = async () => ({ session_id: 'session-1', task_id: 'task-1' });
+  investigationApi.startDiagnosis = async () => ({ status: 'submitted', session_id: 'session-1', task_id: 'task-1', message: 'ok' });
   investigationApi.stopDiagnosis = async (payload) => {
     stopCalls.push(payload);
-    return { status: 'stopped' };
+    return { status: 'stopped', session_id: payload.session_id, message: 'ok' };
   };
   investigationApi.approveAction = async (payload) => {
     approveCalls.push(payload);
-    return { status: 'approved' };
+    return { status: 'approved', session_id: payload.session_id, action_id: payload.action_id, message: 'ok' };
   };
   investigationApi.rejectAction = async (payload) => {
     rejectCalls.push(payload);
-    return { status: 'rejected' };
+    return { status: 'rejected', session_id: payload.session_id, action_id: payload.action_id, message: 'ok' };
   };
 
   wsService.startDiagnosis = (...args: any[]) => {

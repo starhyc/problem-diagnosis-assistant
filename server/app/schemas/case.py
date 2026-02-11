@@ -241,6 +241,29 @@ class DiagnosisActionResponse(BaseModel):
     description: str
 
 
+
+
+class StartDiagnosisResponse(BaseModel):
+    status: str
+    session_id: str
+    task_id: str
+    message: str
+
+
+class DiagnosisSessionControlResponse(BaseModel):
+    status: str
+    session_id: str
+    message: str
+
+
+class DiagnosisActionDecisionResponse(BaseModel):
+    status: str
+    session_id: str
+    action_id: str
+    message: str
+    reason: Optional[str] = None
+
+
 class StopDiagnosisRequest(BaseModel):
     session_id: str
 

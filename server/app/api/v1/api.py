@@ -2,7 +2,8 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth,
     dashboard,
-    investigation,
+    investigation_control,
+    investigation_demo,
     history,
     knowledge,
     mcp_settings,
@@ -16,7 +17,8 @@ from app.api.v1.endpoints import (
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["认证"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
-api_router.include_router(investigation.router, prefix="/investigation", tags=["Investigation"])
+api_router.include_router(investigation_demo.router, prefix="/investigation/demo", tags=["Investigation Demo"])
+api_router.include_router(investigation_control.router, prefix="/investigation/control", tags=["Investigation Control"])
 api_router.include_router(history.router, prefix="/history", tags=["History"])
 api_router.include_router(knowledge.router, prefix="/knowledge", tags=["Knowledge"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
