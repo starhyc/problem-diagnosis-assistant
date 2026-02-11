@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tarfile
 import tempfile
 import zipfile
@@ -8,10 +9,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-import yaml
 from app.core.database import SessionLocal
 from app.models.case import Setting
-from app.services.skill_sandbox import ApprovalRequiredError, SandboxPolicy, SkillSandboxExecutor
+from app.services.skill_runtime import (
+    ApprovalRequiredError,
+    SandboxPolicy,
+    SkillPackageValidator,
+    SkillValidationError,
+    create_runtime,
+)
 
 
 class SkillLoader:
@@ -20,7 +26,9 @@ class SkillLoader:
     def __init__(self) -> None:
         self.skills_root = Path("/tmp/skills")
         self.skills_root.mkdir(parents=True, exist_ok=True)
-        self.sandbox = SkillSandboxExecutor(self.skills_root)
+        self.validator = SkillPackageValidator()
+        self.runtime_mode = os.getenv("SKILL_RUNTIME_MODE", "restricted").lower()
+        self.runtime = create_runtime(self.runtime_mode)
 
     def list_skills(self) -> List[Dict[str, Any]]:
         with SessionLocal() as db:
@@ -37,6 +45,7 @@ class SkillLoader:
 
             self._extract_archive(src_path, extract_dir)
             metadata = self._parse_metadata(extract_dir)
+            self.validator.validate_package(extract_dir, metadata)
             skill_id = metadata["id"]
 
             dest_dir = self.skills_root / skill_id
@@ -65,6 +74,7 @@ class SkillLoader:
                 "version": metadata.get("version", "0.1.0"),
                 "entrypoint": metadata.get("entrypoint", "run.py"),
                 "permissions": metadata.get("permissions", {}),
+                "runtime_mode": self.runtime.metadata.mode,
                 "path": str(self.skills_root / skill_id),
                 "status": "running",
                 "last_test_at": None,
@@ -117,25 +127,40 @@ class SkillLoader:
             config = json.loads(row.config) if row.config else {}
 
         permissions = config.get("permissions", {})
-        policy = SandboxPolicy(
-            allow_network=bool(permissions.get("network", False)),
-            allow_fs_write=bool(permissions.get("fs_write", False)),
-            timeout_seconds=int(permissions.get("timeout_seconds", 20)),
-        )
+        skill_dir = Path(config.get("path", self.skills_root / skill_id))
+        policy = SandboxPolicy.from_permissions(permissions, skill_dir=skill_dir)
 
         entrypoint = config.get("entrypoint", "run.py")
-        skill_dir = Path(config.get("path", self.skills_root / skill_id))
         command = ["python", entrypoint]
 
         try:
-            return self.sandbox.execute(
+            result = self.runtime.execute(
                 skill_dir=skill_dir,
                 command=command,
                 policy=policy,
                 approval_granted=approval_granted,
             )
+            result["requested_permissions"] = policy.requested_permissions()
+            if "sandbox" not in result:
+                result["sandbox"] = {
+                    "mode": self.runtime.metadata.mode,
+                    "production_safe": self.runtime.metadata.production_safe,
+                    "label": self.runtime.metadata.label,
+                    "policy": policy.as_dict(),
+                }
+            return result
         except ApprovalRequiredError as exc:
-            return {"status": "approval_required", "message": str(exc)}
+            return {
+                "status": "approval_required",
+                "message": str(exc),
+                "requested_permissions": policy.requested_permissions(),
+                "sandbox": {
+                    "mode": self.runtime.metadata.mode,
+                    "production_safe": self.runtime.metadata.production_safe,
+                    "label": self.runtime.metadata.label,
+                    "policy": policy.as_dict(),
+                },
+            }
 
     def test_skill(self, skill_id: str) -> Dict[str, Any]:
         with SessionLocal() as db:
@@ -170,21 +195,10 @@ class SkillLoader:
         raise ValueError("Unsupported archive format")
 
     def _parse_metadata(self, extract_dir: Path) -> Dict[str, Any]:
-        candidates = [
-            extract_dir / "skill.yaml",
-            extract_dir / "skill.yml",
-            extract_dir / "skill.json",
-        ]
-        for path in candidates:
-            if path.exists():
-                if path.suffix in {".yaml", ".yml"}:
-                    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-                else:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                if "id" not in data:
-                    raise ValueError("skill metadata must include id")
-                return data
-        raise ValueError("skill metadata file not found")
+        try:
+            return self.validator.parse_manifest(extract_dir)
+        except SkillValidationError as exc:
+            raise ValueError(str(exc)) from exc
 
     def _get_skill(self, db, skill_id: str) -> Setting:
         row = db.query(Setting).filter(
@@ -197,6 +211,7 @@ class SkillLoader:
 
     def _to_dict(self, row: Setting) -> Dict[str, Any]:
         config = json.loads(row.config) if row.config else {}
+        runtime_mode = config.get("runtime_mode", self.runtime.metadata.mode)
         return {
             "id": row.setting_id,
             "name": row.name,
@@ -205,6 +220,7 @@ class SkillLoader:
             "version": config.get("version", "0.1.0"),
             "entrypoint": config.get("entrypoint", "run.py"),
             "permissions": config.get("permissions", {}),
+            "runtime_mode": runtime_mode,
             "status": config.get("status", "running" if row.enabled else "stopped"),
             "last_test_at": config.get("last_test_at"),
             "last_test_status": config.get("last_test_status"),
