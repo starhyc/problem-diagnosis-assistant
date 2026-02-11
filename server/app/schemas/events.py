@@ -151,3 +151,25 @@ class TaskEvent(BaseEvent):
 
 class TimelineEvent(BaseEvent):
     timeline_items: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class EvidenceContract(BaseModel):
+    source: str = Field(min_length=1)
+    reproducible_query: str = Field(min_length=1)
+    confidence_contribution: float = Field(ge=0, le=1)
+    timestamp: datetime = Field(default_factory=datetime.now)
+    summary: Optional[str] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CoordinationDecision(BaseModel):
+    next_agent: str = Field(min_length=1)
+    expected_output: str = Field(min_length=1)
+    stop_condition: str = Field(min_length=1)
+    rationale: Optional[str] = None
+
+
+class AgentFailureExplanation(BaseModel):
+    status: str = Field(default="ok")
+    reason: Optional[str] = None
+    missing_evidence: List[str] = Field(default_factory=list)

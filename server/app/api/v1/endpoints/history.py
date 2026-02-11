@@ -46,6 +46,23 @@ def replay_history_events(session_id: str, db: Session = Depends(get_db)):
     detail = state_manager.get_session_detail(session_id, db)
     if not detail:
         raise HTTPException(status_code=404, detail="History session not found")
+
+    chain = detail.get("decision_evidence_chain") or {}
+    nodes = chain.get("nodes") or []
+    if nodes:
+        return [
+            {
+                "sequence": index + 1,
+                "event_type": f"chain_{node.get('type', 'step')}",
+                "event_data": {
+                    "node": node,
+                    "edge": (chain.get("edges") or [None] * len(nodes))[index - 1] if index > 0 else None,
+                },
+                "timestamp": node.get("timestamp") or detail.get("last_event_at"),
+            }
+            for index, node in enumerate(nodes)
+        ]
+
     return state_manager.get_session_events(session_id, db)
 
 
