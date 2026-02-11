@@ -1,19 +1,20 @@
-export interface JSONRPCRequest {
-  type: string;
-  data?: any;
+import { DiagnosisEvent, parseDiagnosisEvent } from '../contracts/diagnosisProtocol';
+
+export type WSMessage = DiagnosisEvent;
+
+export type OutboundMessageType =
+  | 'start_diagnosis'
+  | 'stop_diagnosis'
+  | 'approve_action'
+  | 'reject_action'
+  | 'pause_diagnosis'
+  | 'resume_diagnosis'
+  | 'confirmation_response';
+
+export interface JSONRPCRequest<TData extends Record<string, unknown>> {
+  type: OutboundMessageType;
+  data?: TData;
   timestamp?: string;
-}
-
-export interface JSONRPCResponse {
-  type: string;
-  data?: any;
-  timestamp: string;
-}
-
-export interface WSMessage {
-  type: 'agent_message' | 'action_proposal' | 'diagnosis_status' | 'error' | 'confirmation_required' | 'confirmation_status' | 'action_result' | 'timeline_update' | 'confidence_update' | 'agent_trace_start' | 'agent_trace_step' | 'agent_trace_complete' | 'diagnosis_completed' | 'connection_established' | 'heartbeat';
-  data: any;
-  timestamp: string;
 }
 
 export interface AgentMessage {
@@ -57,7 +58,7 @@ export interface ConfirmationRequired {
   requiresSecondConfirmation?: boolean;
 }
 
-export type MessageHandler = (message: WSMessage) => void;
+export type MessageHandler = (message: DiagnosisEvent) => void;
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 class WebSocketService {
@@ -78,13 +79,8 @@ class WebSocketService {
   }
 
   connect(): Promise<void> {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      return Promise.resolve();
-    }
-
-    if (this.ws?.readyState === WebSocket.CONNECTING && this.connectingPromise) {
-      return this.connectingPromise;
-    }
+    if (this.ws?.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (this.ws?.readyState === WebSocket.CONNECTING && this.connectingPromise) return this.connectingPromise;
 
     if (this.ws) {
       this.ws.close();
@@ -98,7 +94,6 @@ class WebSocketService {
         this.ws = new WebSocket(this.url);
 
         this.ws.onopen = () => {
-          console.log('[WebSocket] Connected to agent CLI');
           this.reconnectAttempts = 0;
           this.setConnectionStatus('connected');
           this.connectingPromise = null;
@@ -107,7 +102,12 @@ class WebSocketService {
 
         this.ws.onmessage = (event) => {
           try {
-            const message: WSMessage = JSON.parse(event.data);
+            const raw = JSON.parse(event.data) as unknown;
+            const message = parseDiagnosisEvent(raw);
+            if (!message) {
+              console.warn('[WebSocket] Dropped message not matching diagnosis protocol');
+              return;
+            }
             this.notifyHandlers(message);
           } catch (error) {
             console.error('[WebSocket] Failed to parse message:', error);
@@ -115,14 +115,12 @@ class WebSocketService {
         };
 
         this.ws.onerror = (error) => {
-          console.error('[WebSocket] Error:', error);
           this.setConnectionStatus('error');
           this.connectingPromise = null;
           reject(error);
         };
 
         this.ws.onclose = () => {
-          console.log('[WebSocket] Connection closed');
           this.setConnectionStatus('disconnected');
           this.connectingPromise = null;
           this.attemptReconnect();
@@ -140,37 +138,21 @@ class WebSocketService {
   disconnect(): void {
     this.manualDisconnect = true;
     this.reconnectAttempts = 0;
-
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-
     this.connectingPromise = null;
     this.setConnectionStatus('disconnected');
   }
 
   private attemptReconnect(): void {
-    if (this.manualDisconnect) {
-      console.log('[WebSocket] Manual disconnect, skipping reconnect');
-      return;
-    }
+    if (this.manualDisconnect || this.reconnectAttempts >= this.maxReconnectAttempts) return;
 
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('[WebSocket] Max reconnection attempts reached');
-      return;
-    }
-
-    this.reconnectAttempts++;
+    this.reconnectAttempts += 1;
     const delay = this.reconnectDelay * this.reconnectAttempts;
-
-    console.log(`[WebSocket] Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch((error) => {
         console.error('[WebSocket] Reconnection failed:', error);
@@ -178,22 +160,19 @@ class WebSocketService {
     }, delay);
   }
 
-  send(type: string, data: any): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.error('[WebSocket] Cannot send message: connection not open');
-      return;
-    }
+  send(type: OutboundMessageType | string, data: Record<string, unknown>): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    const request: JSONRPCRequest = {
-      type,
+    const safeType = type as OutboundMessageType;
+    const request: JSONRPCRequest<Record<string, unknown>> = {
+      type: safeType,
       data,
       timestamp: new Date().toISOString(),
     };
-
     this.ws.send(JSON.stringify(request));
   }
 
-  startDiagnosis(symptom: string, description: string, agentType: string = 'diagnosis', context?: any, mode: string = 'auto'): void {
+  startDiagnosis(symptom: string, description: string, agentType = 'diagnosis', context?: Record<string, unknown>, mode = 'auto'): void {
     this.send('start_diagnosis', { agent_type: agentType, symptom, description, context, mode });
   }
 
@@ -217,7 +196,7 @@ class WebSocketService {
     this.send('resume_diagnosis', {});
   }
 
-  respondToConfirmation(confirmationId: string, response: any): void {
+  respondToConfirmation(confirmationId: string, response: Record<string, unknown>): void {
     this.send('confirmation_response', { confirmationId, response });
   }
 
@@ -231,7 +210,7 @@ class WebSocketService {
     return () => this.statusHandlers.delete(handler);
   }
 
-  private notifyHandlers(message: WSMessage): void {
+  private notifyHandlers(message: DiagnosisEvent): void {
     this.messageHandlers.forEach((handler) => {
       try {
         handler(message);

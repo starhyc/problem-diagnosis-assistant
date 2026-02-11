@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Diagnosis Event Protocol",
+  "version": "1.0.0",
+  "description": "Canonical websocket/pubsub protocol for diagnosis lifecycle events.",
+  "envelope": {
+    "required": ["type", "timestamp"],
+    "properties": {
+      "type": { "type": "string" },
+      "timestamp": { "type": "string", "format": "date-time" },
+      "data": { "type": "object" }
+    }
+  },
+  "events": {
+    "diagnosis_started": {
+      "description": "Diagnosis run accepted and started",
+      "requiredDataFields": ["session_id"]
+    },
+    "diagnosis_progress": {
+      "description": "Unified progress stream for timeline/confidence/trace/progress",
+      "requiredDataFields": ["session_id", "phase"]
+    },
+    "confirmation_required": {
+      "description": "Runtime asks human confirmation for risky action",
+      "requiredDataFields": ["id", "message"]
+    },
+    "confirmation_rejected": {
+      "description": "Human rejected action or workflow rejected confirmation",
+      "requiredDataFields": ["confirmationId", "reason"]
+    },
+    "diagnosis_completed": {
+      "description": "Diagnosis workflow completed successfully",
+      "requiredDataFields": ["session_id", "summary"]
+    },
+    "diagnosis_failed": {
+      "description": "Diagnosis workflow failed",
+      "requiredDataFields": ["session_id", "error"]
+    },
+    "heartbeat": {
+      "description": "Connection keepalive",
+      "requiredDataFields": []
+    },
+    "replay_snapshot": {
+      "description": "Event replay snapshot for recovery and UI replay",
+      "requiredDataFields": ["snapshotAt", "traces"]
+    }
+  }
+}
