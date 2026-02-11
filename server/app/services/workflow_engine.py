@@ -166,10 +166,22 @@ class DiagnosisWorkflowEngine:
         )
         return trace_context
 
+    def _normalize_confirmation_risk(self, payload: Dict[str, Any], default: ConfirmationRiskLevel = ConfirmationRiskLevel.R0) -> str:
+        raw = payload.get("riskLevel") or payload.get("risk_level")
+        if isinstance(raw, str) and raw in {level.value for level in ConfirmationRiskLevel}:
+            return raw
+        return default.value
+
     def _record_audit_event(self, session_id: str, event_type: str, event_data: Dict[str, Any]):
+        normalized = dict(event_data)
+        if event_type.startswith("confirmation") or "confirmation" in event_type:
+            risk_level = self._normalize_confirmation_risk(normalized)
+            normalized["risk_level"] = risk_level
+            normalized.pop("riskLevel", None)
+
         try:
             db = next(get_db())
-            state_manager.record_event(session_id, event_type, event_data, db)
+            state_manager.record_event(session_id, event_type, normalized, db)
         except Exception as e:
             logger.error(f"Failed to record audit event for {session_id}: {e}")
 
@@ -259,7 +271,7 @@ class DiagnosisWorkflowEngine:
             risk_level=risk_level,
         )
 
-    def submit_confirmation_response(self, session_id: str, confirmation_id: str, response: Dict[str, Any]) -> bool:
+    def submit_confirmation_response(self, session_id: str, confirmation_id: str, response: Dict[str, Any]) -> Optional[str]:
         action_id = response.get("actionId") or response.get("action_id") or confirmation_id
         step_id = response.get("stepId") or response.get("step_id") or "confirmation_response"
         idempotency_key = self._idempotency_key(session_id, action_id, step_id)
@@ -268,13 +280,13 @@ class DiagnosisWorkflowEngine:
                 f"Duplicate confirmation response dropped: session={session_id}, "
                 f"action_id={action_id}, step_id={step_id}, idempotency_key={idempotency_key}"
             )
-            return False
+            return None
 
         key = self._confirmation_key(session_id, confirmation_id)
         raw = self.redis.get(key)
         if not raw:
             logger.warning(f"Confirmation not found: session={session_id}, confirmation_id={confirmation_id}")
-            return False
+            return None
 
         payload = json.loads(raw)
         payload["status"] = "responded"
@@ -282,20 +294,23 @@ class DiagnosisWorkflowEngine:
         payload["responded_at"] = datetime.now().isoformat()
         payload["idempotency_key"] = idempotency_key
         self.redis.setex(key, 3600, json.dumps(payload))
-        return True
+        confirmation_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        return self._normalize_confirmation_risk(confirmation_data)
 
     async def _request_confirmation(self, state: DiagnosisState, confirmation_data: Dict[str, Any]) -> Dict[str, Any]:
         session_id = state.get("session_id", "unknown")
         self._set_task_status(state, "waiting_user")
         state["current_phase"] = "waiting_user"
         confirmation_id = str(uuid.uuid4())
-        timeout_seconds = confirmation_data.get("timeoutSeconds", 180)
+        normalized_confirmation = dict(confirmation_data)
+        normalized_confirmation["riskLevel"] = self._normalize_confirmation_risk(normalized_confirmation)
+        timeout_seconds = normalized_confirmation.get("timeoutSeconds", 180)
 
         payload = {
             "id": confirmation_id,
             "status": "pending",
             "created_at": datetime.now().isoformat(),
-            "data": confirmation_data,
+            "data": normalized_confirmation,
         }
         self.redis.setex(
             self._confirmation_key(session_id, confirmation_id),
@@ -306,11 +321,11 @@ class DiagnosisWorkflowEngine:
         event_publisher.publish_diagnosis_event(session_id, {
             "type": "confirmation_required",
             "id": confirmation_id,
-            **confirmation_data,
+            **normalized_confirmation,
         })
         self._record_audit_event(session_id, "confirmation_required", {
             "confirmation_id": confirmation_id,
-            **confirmation_data,
+            **normalized_confirmation,
         })
 
         deadline = datetime.now().timestamp() + timeout_seconds
@@ -335,7 +350,7 @@ class DiagnosisWorkflowEngine:
                     }
             await asyncio.sleep(0.5)
 
-        timeout_strategy = confirmation_data.get("timeoutStrategy", "auto_reject")
+        timeout_strategy = normalized_confirmation.get("timeoutStrategy", "auto_reject")
         self._record_audit_event(session_id, "confirmation_timeout", {
             "confirmation_id": confirmation_id,
             "timeout_strategy": timeout_strategy,
@@ -542,6 +557,7 @@ class DiagnosisWorkflowEngine:
                     "to_mode": DiagnosisMode.PLAN_EXECUTE.value,
                     "reason": "react_stagnation",
                     "no_increment_rounds": no_increment_rounds,
+                    "risk_level": ConfirmationRiskLevel.R1.value,
                 })
                 state["mode"] = DiagnosisMode.PLAN_EXECUTE.value
                 return await self._run_plan_execute(state)
@@ -851,6 +867,7 @@ class DiagnosisWorkflowEngine:
                         "type": "confirmation_rejected",
                         "action_id": "knowledge_match",
                         "reason": first_result.get("response", {}).get("reason", "rejected"),
+                        "riskLevel": confirmation_data.get("riskLevel", ConfirmationRiskLevel.R2.value),
                     })
                     return state
 

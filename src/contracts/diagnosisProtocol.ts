@@ -41,7 +41,7 @@ export interface ConfirmationRequiredData {
   id: string;
   actionId: string;
   message: string;
-  riskLevel?: 'low' | 'medium' | 'high' | 'critical' | 'R1' | 'R2' | 'R3';
+  riskLevel?: 'R0' | 'R1' | 'R2' | 'R3';
   [key: string]: unknown;
 }
 

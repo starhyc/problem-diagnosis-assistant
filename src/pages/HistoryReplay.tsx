@@ -4,6 +4,7 @@ import AgentHierarchyTree from '../components/investigation/AgentHierarchyTree';
 import ExecutionTimeline from '../components/investigation/ExecutionTimeline';
 import GlobalTimeline from '../components/investigation/GlobalTimeline';
 import { historyApi, HistoryEvent } from '../lib/api';
+import { formatRiskLevel } from '../lib/riskLevel';
 import { AgentTrace, ExecutionStep } from '../types/trace';
 
 function buildTraceMap(events: HistoryEvent[], maxIndex: number): Map<string, AgentTrace> {
@@ -112,7 +113,7 @@ export default function HistoryReplay() {
           return {
             sequence: event.sequence,
             type: event.event_type,
-            risk: data.riskLevel || data.risk_level || '-',
+            risk: formatRiskLevel((data.riskLevel || data.risk_level) as 'R0' | 'R1' | 'R2' | 'R3' | undefined),
             impactScope: data.impactScope || data.impact_scope || '-',
             rollbackPlan: data.rollbackPlan || data.rollback_plan || '-',
           };

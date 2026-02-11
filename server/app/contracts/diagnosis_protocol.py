@@ -40,6 +40,32 @@ class InvalidDiagnosisEvent(ValueError):
     """Raised when a diagnosis event violates protocol contract."""
 
 
+
+CONFIRMATION_EVENT_TYPES: Final[set[str]] = {
+    "confirmation_required",
+    "confirmation_rejected",
+    "confirmation_status",
+    "confirmation_gate_decision",
+}
+
+ALLOWED_CONFIRMATION_RISK_LEVELS: Final[set[str]] = {"R0", "R1", "R2", "R3"}
+
+
+def _extract_confirmation_risk_level(event_type: str, event: Dict[str, Any]) -> str | None:
+    if event_type not in CONFIRMATION_EVENT_TYPES:
+        return None
+
+    direct = event.get("riskLevel") or event.get("risk_level")
+    if isinstance(direct, str):
+        return direct
+
+    data = event.get("data")
+    if isinstance(data, dict):
+        nested = data.get("riskLevel") or data.get("risk_level")
+        if isinstance(nested, str):
+            return nested
+
+    return None
 def validate_event_type(event_type: str) -> None:
     if event_type not in ALLOWED_EVENT_TYPES:
         raise InvalidDiagnosisEvent(f"Unknown diagnosis event type: {event_type}")
@@ -57,5 +83,14 @@ def normalize_event(event: Dict[str, Any]) -> Dict[str, Any]:
 
     if "data" in normalized and not isinstance(normalized["data"], dict):
         raise InvalidDiagnosisEvent("Diagnosis event 'data' must be an object when present")
+
+    risk_level = _extract_confirmation_risk_level(event_type, normalized)
+    if event_type in CONFIRMATION_EVENT_TYPES:
+        if not risk_level:
+            raise InvalidDiagnosisEvent(f"{event_type} must include riskLevel/risk_level")
+        if risk_level not in ALLOWED_CONFIRMATION_RISK_LEVELS:
+            raise InvalidDiagnosisEvent(
+                f"{event_type} includes invalid risk level '{risk_level}', expected one of {sorted(ALLOWED_CONFIRMATION_RISK_LEVELS)}"
+            )
 
     return normalized

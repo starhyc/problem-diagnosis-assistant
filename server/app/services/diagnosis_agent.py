@@ -4,6 +4,7 @@ import asyncio
 import uuid
 from app.core.logging_config import get_logger
 from app.services.agent_base import BaseAgent
+from app.schemas.events import ConfirmationRiskLevel
 
 logger = get_logger(__name__)
 
@@ -266,7 +267,7 @@ class MockDiagnosisAgent(BaseAgent):
                             {"label": "修改分析范围", "value": "modify"}
                         ],
                         "defaultOption": "continue",
-                        "riskLevel": "low",
+                        "riskLevel": ConfirmationRiskLevel.R1.value,
                         "timeout": 300
                     },
                     "timestamp": datetime.now().isoformat()
@@ -490,7 +491,7 @@ class MockDiagnosisAgent(BaseAgent):
                 "title": "将连接池大小从100增加到300",
                 "description": "基于日志分析和配置审查，建议将maximum-pool-size增加到300",
                 "confidence": 95,
-                "riskLevel": "low",
+                "riskLevel": ConfirmationRiskLevel.R1.value,
                 "requiresConfirmation": True,
                 "canBeInterrupted": False
             },

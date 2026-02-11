@@ -10,6 +10,7 @@ from app.core.event_subscriber import EventSubscriber
 from app.tasks.diagnosis_tasks import run_diagnosis
 from app.core.database import get_db
 from app.contracts.diagnosis_protocol import InvalidDiagnosisEvent, normalize_event
+from app.schemas.events import ConfirmationRiskLevel
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -187,7 +188,7 @@ async def stop_diagnosis(session_id: str, data: dict):
     workflow_engine.cancel_workflow(session_id)
     await send_message(session_id, "diagnosis_status", {
         "status": "stopped",
-        "session_id": session_id
+        "session_id": session_id,
     })
 
 
@@ -195,7 +196,7 @@ async def approve_action(session_id: str, data: dict):
     action_id = data.get("actionId", "")
     await send_message(session_id, "action_approved", {
         "action_id": action_id,
-        "session_id": session_id
+        "session_id": session_id,
     })
 
 
@@ -205,7 +206,8 @@ async def reject_action(session_id: str, data: dict):
     await send_message(session_id, "confirmation_rejected", {
         "action_id": action_id,
         "reason": reason,
-        "session_id": session_id
+        "session_id": session_id,
+        "riskLevel": ConfirmationRiskLevel.R1.value,
     })
 
 
@@ -214,7 +216,7 @@ async def pause_diagnosis(session_id: str, data: dict):
     workflow_engine.pause_workflow(session_id)
     await send_message(session_id, "diagnosis_status", {
         "status": "paused",
-        "session_id": session_id
+        "session_id": session_id,
     })
 
 
@@ -223,7 +225,7 @@ async def resume_diagnosis(session_id: str, data: dict):
     workflow_engine.resume_workflow(session_id)
     await send_message(session_id, "diagnosis_status", {
         "status": "resumed",
-        "session_id": session_id
+        "session_id": session_id,
     })
 
 
@@ -237,8 +239,8 @@ async def confirmation_response(session_id: str, data: dict):
         await send_error(session_id, "confirmationId is required")
         return
 
-    accepted = workflow_engine.submit_confirmation_response(session_id, confirmation_id, response)
-    if not accepted:
+    confirmation_risk = workflow_engine.submit_confirmation_response(session_id, confirmation_id, response)
+    if not confirmation_risk:
         await send_error(session_id, f"No pending confirmation found: {confirmation_id}")
         return
 
@@ -259,4 +261,5 @@ async def confirmation_response(session_id: str, data: dict):
         "status": status,
         "action": action,
         "session_id": session_id,
+        "riskLevel": confirmation_risk,
     })
