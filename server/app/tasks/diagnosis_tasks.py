@@ -8,6 +8,7 @@ from app.core.event_publisher import event_publisher
 from app.services.mode_router import mode_router, DiagnosisMode, TaskFeatures, normalize_mode
 from typing import Dict, Any, Optional
 import asyncio
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -83,6 +84,33 @@ def run_diagnosis(self, session_id: str, symptom: str, mode: str = "auto", conte
             else:
                 selected_mode = DiagnosisMode.PLAN_EXECUTE.value
                 decision_trace.append({"stage": "default", "mode": selected_mode})
+
+        mode_router_payload = {
+            "selected_mode": selected_mode,
+            "decision_trace": decision_trace,
+            "input_mode": mode,
+            "normalized_mode": normalized_mode,
+            "context_features": {
+                "step_complexity": context.get("step_complexity", 4),
+                "cross_domain_count": context.get("cross_domain_count", 1),
+                "uncertainty": context.get("uncertainty", 3),
+            },
+        }
+        state_manager.record_event(session_id, "mode_router_decision", mode_router_payload, db)
+        event_publisher.publish_diagnosis_event(session_id, {
+            "type": "mode_router_decision",
+            **mode_router_payload,
+        })
+        event_publisher.publish_diagnosis_event(session_id, {
+            "type": "agent_trace_step",
+            "agentId": f"mode-router-{session_id}",
+            "parentId": None,
+            "id": f"mode-router-{self.request.id}",
+            "stepType": "mode_routing",
+            "content": f"mode={selected_mode}",
+            "timestamp": datetime.now().isoformat(),
+            "modeDecision": decision_trace,
+        })
 
         event_publisher.publish_diagnosis_event(session_id, {
             "type": "diagnosis_started",

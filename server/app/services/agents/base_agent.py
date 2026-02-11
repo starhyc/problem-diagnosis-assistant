@@ -9,6 +9,10 @@ from app.core.llm_factory import llm_factory
 from app.core.tool_registry import tool_registry
 from app.core.logging_config import get_logger
 from app.core.event_publisher import event_publisher
+from app.services.modes.direct_executor import DirectExecutor
+from app.services.modes.plan_execute_executor import PlanExecuteExecutor
+from app.services.modes.react_executor import ReActExecutor
+from app.services.modes.hierarchical_executor import HierarchicalExecutor
 
 logger = get_logger(__name__)
 
@@ -34,6 +38,12 @@ class BaseAgent(ABC):
         self.retry_count = 3
         self.supported_modes = supported_modes or [default_mode]
         self.default_mode = default_mode
+        self.mode_executors = {
+            "direct": DirectExecutor(),
+            "plan_execute": PlanExecuteExecutor(),
+            "react": ReActExecutor(),
+            "hierarchical": HierarchicalExecutor(),
+        }
 
     def _extract_model_name(self) -> str:
         return getattr(self.llm, "model_name", "unknown") if self.llm else "unknown"
@@ -73,7 +83,11 @@ class BaseAgent(ABC):
 
         payload = context.copy() if context else {}
         payload["mode"] = execution_mode
-        return await self.execute(task, payload)
+        executor = self.mode_executors.get(execution_mode)
+        if not executor:
+            logger.warning(f"Unknown mode executor={execution_mode}, fallback to direct")
+            executor = self.mode_executors["direct"]
+        return await executor.execute(self, task, payload)
 
     async def execute_with_timeout(self, task: str, context: Dict[str, Any], mode: Optional[str] = None) -> Dict[str, Any]:
         """Execute agent task with timeout and retry logic"""
@@ -86,6 +100,10 @@ class BaseAgent(ABC):
             "agentId": trace_agent_id,
             "agentName": self.agent_name,
             "parentId": trace_parent_id,
+            "parentMode": context.get("parent_mode") if context else None,
+            "forcedMode": context.get("forced_mode") if context else None,
+            "fallbackMode": context.get("fallback_mode") if context else None,
+            "mode": mode or (context.get("mode") if context else self.default_mode),
             "toolCall": None,
             "latency": 0,
             "inputTokens": 0,
@@ -105,6 +123,10 @@ class BaseAgent(ABC):
                     "id": str(uuid.uuid4()),
                     "stepType": "llm_thinking",
                     "content": f"attempt={attempt + 1}",
+                    "parentMode": context.get("parent_mode") if context else None,
+                    "forcedMode": context.get("forced_mode") if context else None,
+                    "fallbackMode": context.get("fallback_mode") if context else None,
+                    "mode": mode or (context.get("mode") if context else self.default_mode),
                     "toolCall": None,
                     "latency": 0,
                     "inputTokens": 0,
