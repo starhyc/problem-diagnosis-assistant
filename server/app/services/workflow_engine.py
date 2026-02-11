@@ -92,8 +92,16 @@ class DiagnosisWorkflowEngine:
             )
             return False
 
-    def _set_task_status(self, state: DiagnosisState, task_status: str):
-        state_manager.apply_task_status(state, task_status)
+    def _set_task_status(self, state: DiagnosisState, task_status: str, reason: Optional[str] = None):
+        session_id = state.get("session_id", "unknown")
+        with SessionLocal() as db:
+            state_manager.transition(
+                session_id=session_id,
+                task_status=task_status,
+                db=db,
+                event_data={"stage": reason or "workflow_engine"},
+                state_data=state,
+            )
 
     def _build_objective(self, state: DiagnosisState, phase: str, default_tools: Optional[List[str]] = None) -> Dict[str, Any]:
         context = state.get("snapshot_data", {}).get("context", {}) if isinstance(state.get("snapshot_data"), dict) else {}
@@ -498,27 +506,25 @@ class DiagnosisWorkflowEngine:
             },
         )
         state.setdefault("trace_root_id", str(uuid.uuid4()))
-        state.setdefault("task_status", "submitted")
-
         try:
-            self._set_task_status(state, "running")
+            self._set_task_status(state, "running", reason="workflow_started")
             executor = self.executors[selected_mode]
             result = await executor(state)
             if result.get("cancelled"):
-                self._set_task_status(result, "canceled")
+                self._set_task_status(result, "canceled", reason="workflow_cancelled")
                 result["current_phase"] = "canceled"
             elif result.get("task_status") != "waiting_user":
-                self._set_task_status(result, "completed")
+                self._set_task_status(result, "completed", reason="workflow_completed")
                 result["current_phase"] = "completed"
         except Exception as exc:
             logger.warning(f"Mode execution failed in {selected_mode}: {exc}")
             fallback_mode = self._fallback_mode(selected_mode)
             if fallback_mode == selected_mode:
-                self._set_task_status(state, "failed")
+                self._set_task_status(state, "failed", reason="workflow_failed")
                 state["current_phase"] = "failed"
                 raise
 
-            self._set_task_status(state, "retrying")
+            self._set_task_status(state, "retrying", reason="workflow_retrying")
             state["current_phase"] = "retrying"
             state["mode_history"].append(
                 {
@@ -541,10 +547,10 @@ class DiagnosisWorkflowEngine:
             state["mode"] = fallback_mode
             result = await self.executors[fallback_mode](state)
             if result.get("cancelled"):
-                self._set_task_status(result, "canceled")
+                self._set_task_status(result, "canceled", reason="workflow_cancelled")
                 result["current_phase"] = "canceled"
             else:
-                self._set_task_status(result, "completed")
+                self._set_task_status(result, "completed", reason="workflow_completed")
                 result["current_phase"] = "completed"
 
         final_effective_mode = result.get("mode", state.get("mode", selected_mode))

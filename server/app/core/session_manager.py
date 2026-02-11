@@ -11,6 +11,15 @@ class RedisSessionManager:
     def __init__(self):
         self.redis = redis_client.get_client()
         self.ttl = settings.redis_session_ttl
+        self._allowed_session_fields = {
+            "session_id",
+            "user_id",
+            "diagnosis_id",
+            "connected_at",
+            "last_activity_at",
+            "connection_id",
+            "client",
+        }
 
     def _session_key(self, session_id: str) -> str:
         return f"session:{session_id}"
@@ -38,12 +47,17 @@ class RedisSessionManager:
         return None
 
     def update_session(self, session_id: str, updates: Dict[str, Any]) -> bool:
-        """Update session data and refresh TTL"""
+        """Update ephemeral connection/session metadata and refresh TTL"""
         session = self.get_session(session_id)
         if not session:
             return False
 
-        session.update(updates)
+        sanitized_updates = {k: v for k, v in updates.items() if k in self._allowed_session_fields}
+        if len(sanitized_updates) != len(updates):
+            ignored = sorted(set(updates.keys()) - set(sanitized_updates.keys()))
+            logger.warning(f"Ignored non-session fields for Redis session {session_id}: {ignored}")
+
+        session.update(sanitized_updates)
         session["last_activity_at"] = datetime.now().isoformat()
 
         key = self._session_key(session_id)
