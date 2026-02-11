@@ -125,15 +125,41 @@ class DiagnosisWorkflowEngine:
         except Exception as exc:
             logger.warning(f"Failed to persist node snapshot for {session_id}/{node_name}: {exc}")
 
-    def _trace_context(self, state: DiagnosisState, agent_name: str, parent_id: Optional[str], task: str, phase: str) -> Dict[str, Any]:
-        return {
+    def _trace_context(
+        self,
+        state: DiagnosisState,
+        agent_name: str,
+        parent_id: Optional[str],
+        task: str,
+        phase: str,
+        parent_mode: Optional[str] = None,
+        forced_mode: Optional[str] = None,
+        fallback_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        trace_context = {
             "session_id": state.get("session_id", "unknown"),
             "trace_agent_id": str(uuid.uuid4()),
             "trace_parent_id": parent_id,
             "task": task,
             "phase": phase,
             "agent_name": agent_name,
+            "parent_mode": parent_mode or state.get("mode"),
+            "forced_mode": forced_mode or state.get("mode"),
+            "fallback_mode": fallback_mode or self._fallback_mode(state.get("mode", DiagnosisMode.PLAN_EXECUTE.value)),
         }
+        self._record_audit_event(
+            state.get("session_id", "unknown"),
+            "agent_dispatch",
+            {
+                "agent": agent_name,
+                "task": task,
+                "phase": phase,
+                "parent_mode": trace_context.get("parent_mode"),
+                "forced_mode": trace_context.get("forced_mode"),
+                "fallback_mode": trace_context.get("fallback_mode"),
+            },
+        )
+        return trace_context
 
     def _record_audit_event(self, session_id: str, event_type: str, event_data: Dict[str, Any]):
         try:
@@ -323,6 +349,13 @@ class DiagnosisWorkflowEngine:
             selected_mode = DiagnosisMode.PLAN_EXECUTE.value
         state.setdefault("mode_history", [])
         state["mode"] = selected_mode
+        state["mode_history"].append(
+            {
+                "stage": "workflow_selected",
+                "mode": selected_mode,
+                "reason": "workflow_entry",
+            }
+        )
         state.setdefault("trace_root_id", str(uuid.uuid4()))
         state.setdefault("task_status", "submitted")
 
@@ -453,14 +486,37 @@ class DiagnosisWorkflowEngine:
             previous_score = progress_score
 
             if no_increment_rounds >= stagnation_limit:
+                session_id = state.get("session_id", "unknown")
                 state.setdefault("mode_history", []).append(
                     {
                         "from": DiagnosisMode.REACT.value,
                         "to": DiagnosisMode.PLAN_EXECUTE.value,
                         "reason": "react_stagnation",
                         "type": "runtime_degrade",
+                        "no_increment_rounds": no_increment_rounds,
                     }
                 )
+                event_publisher.publish_diagnosis_event(session_id, {
+                    "type": "confirmation_required",
+                    "actionId": "react_degradation",
+                    "message": "ReAct 连续无增量，建议降级到 Plan-Execute，是否确认？",
+                    "riskLevel": ConfirmationRiskLevel.R1.value,
+                    "impactScope": "执行模式切换",
+                    "options": [
+                        {"label": "确认降级", "value": "approve"},
+                        {"label": "保持 ReAct", "value": "reject"},
+                    ],
+                    "defaultOption": "approve",
+                    "from_mode": DiagnosisMode.REACT.value,
+                    "to_mode": DiagnosisMode.PLAN_EXECUTE.value,
+                    "reason": "react_stagnation",
+                })
+                self._record_audit_event(session_id, "mode_degrade_confirmation", {
+                    "from_mode": DiagnosisMode.REACT.value,
+                    "to_mode": DiagnosisMode.PLAN_EXECUTE.value,
+                    "reason": "react_stagnation",
+                    "no_increment_rounds": no_increment_rounds,
+                })
                 state["mode"] = DiagnosisMode.PLAN_EXECUTE.value
                 return await self._run_plan_execute(state)
 
