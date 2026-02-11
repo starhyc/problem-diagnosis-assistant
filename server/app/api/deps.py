@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import decode_access_token
 from app.core.logging_config import get_logger
+from app.core.roles import VALID_ROLES
 from app.models.user import User
 from app.schemas.user import TokenData
 from app.repositories.user_repository import UserRepository
@@ -46,6 +47,13 @@ async def get_current_user(
             detail="用户已被禁用"
         )
 
+    if user.role not in VALID_ROLES:
+        logger.warning(f"Token验证失败: 非法角色 - {username}, role={user.role}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="用户角色非法"
+        )
+
     logger.debug(f"Token验证成功: username={username}")
     return user
 
@@ -59,7 +67,17 @@ async def get_current_active_user(
 
 
 def require_role(*allowed_roles: str):
+    invalid_roles = [role for role in allowed_roles if role not in VALID_ROLES]
+    if invalid_roles:
+        raise ValueError(f"Invalid roles in permission declaration: {invalid_roles}")
+
     def role_checker(current_user: User = Depends(get_current_active_user)) -> User:
+        if current_user.role not in VALID_ROLES:
+            logger.warning(f"权限校验失败: 非法用户角色 user={current_user.username}, role={current_user.role}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="用户角色非法"
+            )
         if current_user.role not in allowed_roles:
             logger.warning(f"权限不足: user={current_user.username}, role={current_user.role}, required={allowed_roles}")
             raise HTTPException(
