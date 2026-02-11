@@ -26,7 +26,7 @@ Provide your log analysis findings."""
 
 class LogAgent(BaseAgent):
     def __init__(self):
-        super().__init__("log", "Log Analysis Agent")
+        super().__init__("log", "Log Analysis Agent", supported_modes=["plan_execute", "react", "hierarchical"], default_mode="plan_execute")
 
     @property
     def required_tool_name(self) -> str:

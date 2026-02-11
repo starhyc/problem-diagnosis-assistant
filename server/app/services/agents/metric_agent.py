@@ -26,7 +26,7 @@ Provide your metric analysis findings."""
 
 class MetricAgent(BaseAgent):
     def __init__(self):
-        super().__init__("metric", "Metric Analysis Agent")
+        super().__init__("metric", "Metric Analysis Agent", supported_modes=["plan_execute", "react", "hierarchical"], default_mode="plan_execute")
 
     @property
     def required_tool_name(self) -> str:

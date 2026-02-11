@@ -18,6 +18,9 @@ class DiagnosisState:
         self.current_phase: str = "init"
         self.task_status: str = "submitted"
         self.snapshot_data: Dict[str, Any] = {}
+        self.mode: str = "plan_execute"
+        self.mode_history: List[Dict[str, Any]] = []
+        self.final_effective_mode: str = "plan_execute"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -30,6 +33,9 @@ class DiagnosisState:
             "current_phase": self.current_phase,
             "task_status": self.task_status,
             "snapshot_data": self.snapshot_data,
+            "mode": self.mode,
+            "mode_history": self.mode_history,
+            "final_effective_mode": self.final_effective_mode,
         }
 
 
@@ -286,6 +292,9 @@ class StateManager:
             state.current_phase = data.get("current_phase", "init")
             state.task_status = data.get("task_status", "submitted")
             state.snapshot_data = data.get("snapshot_data", {})
+            state.mode = data.get("mode", "plan_execute")
+            state.mode_history = data.get("mode_history", [])
+            state.final_effective_mode = data.get("final_effective_mode", state.mode)
             self._memory_states[session_id] = state
             return state
         return None
