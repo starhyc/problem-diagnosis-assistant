@@ -249,12 +249,14 @@ class StartDiagnosisResponse(BaseModel):
     session_id: str
     task_id: str
     message: str
+    command_code: str
 
 
 class DiagnosisSessionControlResponse(BaseModel):
     status: str
     session_id: str
     message: str
+    command_code: str
 
 
 class DiagnosisActionDecisionResponse(BaseModel):
@@ -262,6 +264,7 @@ class DiagnosisActionDecisionResponse(BaseModel):
     session_id: str
     action_id: str
     message: str
+    command_code: str
     reason: Optional[str] = None
 
 

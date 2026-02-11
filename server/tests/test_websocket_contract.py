@@ -10,10 +10,6 @@ app.include_router(websocket.router)
 client = TestClient(app)
 
 
-class _FakeTask:
-    id = "task-1"
-
-
 class _FakeSubscriber:
     instances = []
 
@@ -52,8 +48,14 @@ def test_websocket_diagnosis_subscription_lifecycle(monkeypatch):
     _FakeSubscriber.instances.clear()
 
     monkeypatch.setattr(websocket, "EventSubscriber", _FakeSubscriber)
-    monkeypatch.setattr("app.api.v1.endpoints.websocket.session_manager.create_session", lambda *_: True)
-    monkeypatch.setattr("app.api.v1.endpoints.websocket.run_diagnosis.delay", lambda *_args, **_kwargs: _FakeTask())
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.websocket.diagnosis_control_service.start_diagnosis",
+        lambda *_args, **_kwargs: {
+            "status": "submitted",
+            "task_id": "task-1",
+            "command_code": "command_accepted",
+        },
+    )
 
     with client.websocket_connect("/agent/ws") as ws:
         connected = ws.receive_json()

@@ -1,9 +1,6 @@
-import uuid
-
 from fastapi import APIRouter, HTTPException
 
 from app.core.logging_config import get_logger
-from app.core.session_manager import session_manager
 from app.schemas.case import (
     ActionApprovalRequest,
     ActionRejectRequest,
@@ -13,7 +10,7 @@ from app.schemas.case import (
     StartDiagnosisResponse,
     StopDiagnosisRequest,
 )
-from app.tasks.diagnosis_tasks import run_diagnosis
+from app.services.diagnosis_control_service import diagnosis_control_service
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -21,18 +18,21 @@ router = APIRouter()
 
 @router.post("/start", response_model=StartDiagnosisResponse)
 def start_diagnosis(request: StartDiagnosisRequest):
-    session_id = str(uuid.uuid4())
     mode = request.mode if hasattr(request, "mode") else "auto"
-
-    logger.info(f"Starting diagnosis: session_id={session_id}, problem={request.problem_description}")
+    logger.info(f"Starting diagnosis: problem={request.problem_description}")
 
     try:
-        task = run_diagnosis.delay(session_id, request.problem_description, mode, request.context)
+        result = diagnosis_control_service.start_diagnosis(
+            request.problem_description,
+            mode,
+            request.context,
+        )
         return StartDiagnosisResponse(
-            status="submitted",
-            session_id=session_id,
-            task_id=task.id,
-            message="Diagnosis task submitted",
+            status=result["status"],
+            session_id=result["session_id"],
+            task_id=result["task_id"],
+            message=result["message"],
+            command_code=result["command_code"],
         )
     except Exception as exc:
         logger.error(f"Failed to start diagnosis: {exc}")
@@ -41,42 +41,43 @@ def start_diagnosis(request: StartDiagnosisRequest):
 
 @router.post("/stop", response_model=DiagnosisSessionControlResponse)
 def stop_diagnosis(request: StopDiagnosisRequest):
-    from app.services.workflow_engine import workflow_engine
-
-    session_id = request.session_id
-    success = workflow_engine.cancel_workflow(session_id)
-
-    if success:
-        session_manager.delete_session(session_id)
-        return DiagnosisSessionControlResponse(
-            status="stopped",
-            session_id=session_id,
-            message="Diagnosis stopped",
-        )
-
-    raise HTTPException(status_code=404, detail="Session not found")
+    result = diagnosis_control_service.stop_diagnosis(request.session_id)
+    status = "stopped" if result.code == "command_accepted" else "unchanged"
+    return DiagnosisSessionControlResponse(
+        status=status,
+        session_id=request.session_id,
+        message=result.message,
+        command_code=result.code,
+    )
 
 
 @router.post("/action/approve", response_model=DiagnosisActionDecisionResponse)
 def approve_action(request: ActionApprovalRequest):
-    logger.info(f"Action approved: session_id={request.session_id}, action_id={request.action_id}")
+    result = diagnosis_control_service.approve_action(request.session_id, request.action_id, source="rest")
+    status = "approved" if result.code == "command_accepted" else "pending"
     return DiagnosisActionDecisionResponse(
-        status="approved",
+        status=status,
         session_id=request.session_id,
         action_id=request.action_id,
-        message="Action approved",
+        message=result.message,
+        command_code=result.code,
     )
 
 
 @router.post("/action/reject", response_model=DiagnosisActionDecisionResponse)
 def reject_action(request: ActionRejectRequest):
-    logger.info(
-        f"Action rejected: session_id={request.session_id}, action_id={request.action_id}, reason={request.reason}"
+    result = diagnosis_control_service.reject_action(
+        request.session_id,
+        request.action_id,
+        request.reason,
+        source="rest",
     )
+    status = "rejected" if result.code == "command_accepted" else "pending"
     return DiagnosisActionDecisionResponse(
-        status="rejected",
+        status=status,
         session_id=request.session_id,
         action_id=request.action_id,
         reason=request.reason,
-        message="Action rejected",
+        message=result.message,
+        command_code=result.code,
     )

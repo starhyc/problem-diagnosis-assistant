@@ -5,12 +5,9 @@ import asyncio
 from datetime import datetime
 import uuid
 from app.core.logging_config import get_logger
-from app.core.session_manager import session_manager
 from app.core.event_subscriber import EventSubscriber
-from app.tasks.diagnosis_tasks import run_diagnosis
-from app.core.database import get_db
 from app.contracts.diagnosis_protocol import InvalidDiagnosisEvent, normalize_event
-from app.schemas.events import ConfirmationRiskLevel
+from app.services.diagnosis_control_service import diagnosis_control_service
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -163,19 +160,19 @@ async def start_diagnosis(session_id: str, data: dict):
     logger.info(f"Starting diagnosis [{session_id}]: symptom={symptom}, mode={mode}")
 
     try:
-        # Create session
-        session_manager.create_session(session_id, user_id)
-
-        # Subscribe to events
         await manager.subscribe_to_events(session_id)
-
-        # Submit Celery task
-        task = run_diagnosis.delay(session_id, symptom, mode, data.get("context"))
-
+        result = diagnosis_control_service.start_diagnosis(
+            symptom,
+            mode,
+            data.get("context"),
+            session_id=session_id,
+            user_id=user_id,
+        )
         await send_message(session_id, "diagnosis_started", {
             "session_id": session_id,
-            "task_id": task.id,
-            "status": "submitted"
+            "task_id": result["task_id"],
+            "status": result["status"],
+            "command_code": result["command_code"],
         })
 
     except Exception as e:
@@ -184,54 +181,71 @@ async def start_diagnosis(session_id: str, data: dict):
 
 
 async def stop_diagnosis(session_id: str, data: dict):
-    from app.services.workflow_engine import workflow_engine
-    workflow_engine.cancel_workflow(session_id)
+    result = diagnosis_control_service.stop_diagnosis(session_id)
     await send_message(session_id, "diagnosis_status", {
-        "status": "stopped",
+        "status": "stopped" if result.code == "command_accepted" else "unchanged",
         "session_id": session_id,
+        "command_code": result.code,
+        "message": result.message,
     })
 
 
 async def approve_action(session_id: str, data: dict):
     action_id = data.get("actionId", "")
-    await send_message(session_id, "action_approved", {
+    result = diagnosis_control_service.approve_action(session_id, action_id, source="websocket")
+    event_type = "action_approved" if result.code == "command_accepted" else "action_rejected"
+    payload = {
         "action_id": action_id,
         "session_id": session_id,
-    })
+        "command_code": result.code,
+        "message": result.message,
+    }
+    if result.details and result.details.get("risk_level"):
+        payload["riskLevel"] = result.details["risk_level"]
+    await send_message(session_id, event_type, payload)
 
 
 async def reject_action(session_id: str, data: dict):
     action_id = data.get("actionId", "")
     reason = data.get("reason", "")
-    await send_message(session_id, "confirmation_rejected", {
+    result = diagnosis_control_service.reject_action(session_id, action_id, reason, source="websocket")
+    payload = {
         "action_id": action_id,
         "reason": reason,
         "session_id": session_id,
-        "riskLevel": ConfirmationRiskLevel.R1.value,
-    })
+        "command_code": result.code,
+        "message": result.message,
+    }
+    if result.details and result.details.get("risk_level"):
+        payload["riskLevel"] = result.details["risk_level"]
+    await send_message(
+        session_id,
+        "confirmation_rejected" if result.code == "command_accepted" else "action_rejected",
+        payload,
+    )
 
 
 async def pause_diagnosis(session_id: str, data: dict):
-    from app.services.workflow_engine import workflow_engine
-    workflow_engine.pause_workflow(session_id)
+    result = diagnosis_control_service.pause_diagnosis(session_id)
     await send_message(session_id, "diagnosis_status", {
-        "status": "paused",
+        "status": "paused" if result.code == "command_accepted" else "unchanged",
         "session_id": session_id,
+        "command_code": result.code,
+        "message": result.message,
     })
 
 
 async def resume_diagnosis(session_id: str, data: dict):
-    from app.services.workflow_engine import workflow_engine
-    workflow_engine.resume_workflow(session_id)
+    result = diagnosis_control_service.resume_diagnosis(session_id)
     await send_message(session_id, "diagnosis_status", {
-        "status": "resumed",
+        "status": "resumed" if result.code == "command_accepted" else "unchanged",
         "session_id": session_id,
+        "command_code": result.code,
+        "message": result.message,
     })
 
 
 async def confirmation_response(session_id: str, data: dict):
-    from app.services.workflow_engine import workflow_engine
-    from app.services.state_manager import state_manager
     confirmation_id = data.get("confirmationId", "")
     response = data.get("response", {})
 
@@ -239,27 +253,46 @@ async def confirmation_response(session_id: str, data: dict):
         await send_error(session_id, "confirmationId is required")
         return
 
-    confirmation_risk = workflow_engine.submit_confirmation_response(session_id, confirmation_id, response)
-    if not confirmation_risk:
-        await send_error(session_id, f"No pending confirmation found: {confirmation_id}")
+    result = diagnosis_control_service.submit_confirmation_response(
+        session_id,
+        confirmation_id,
+        response,
+        source="websocket",
+    )
+
+    if result.code == "no_pending_confirmation":
+        await send_message(session_id, "confirmation_status", {
+            "confirmationId": confirmation_id,
+            "status": "pending",
+            "action": response.get("action", "approve"),
+            "session_id": session_id,
+            "command_code": result.code,
+            "message": result.message,
+            "riskLevel": "R0",
+        })
         return
 
-    try:
-        db = next(get_db())
-        state_manager.record_event(session_id, "confirmation_response", {
-            "confirmation_id": confirmation_id,
-            "response": response,
-            "source": "websocket",
-        }, db)
-    except Exception as e:
-        logger.warning(f"Failed to persist confirmation response: {e}")
+    if result.code == "command_rejected":
+        await send_message(session_id, "confirmation_status", {
+            "confirmationId": confirmation_id,
+            "status": "rejected",
+            "action": response.get("action", "approve"),
+            "session_id": session_id,
+            "command_code": result.code,
+            "message": result.message,
+            "riskLevel": "R0",
+        })
+        return
 
     action = response.get("action", "approve")
     status = "approved" if action == "approve" else "rejected"
-    await send_message(session_id, "confirmation_status", {
+    payload = {
         "confirmationId": confirmation_id,
         "status": status,
         "action": action,
         "session_id": session_id,
-        "riskLevel": confirmation_risk,
-    })
+        "command_code": result.code,
+    }
+    if result.details and result.details.get("risk_level"):
+        payload["riskLevel"] = result.details["risk_level"]
+    await send_message(session_id, "confirmation_status", payload)

@@ -345,7 +345,7 @@ class DiagnosisWorkflowEngine:
             risk_level=risk_level,
         )
 
-    def submit_confirmation_response(self, session_id: str, confirmation_id: str, response: Dict[str, Any]) -> Optional[str]:
+    def submit_confirmation_response(self, session_id: str, confirmation_id: str, response: Dict[str, Any]) -> Dict[str, Any]:
         action_id = response.get("actionId") or response.get("action_id") or confirmation_id
         step_id = response.get("stepId") or response.get("step_id") or "confirmation_response"
         idempotency_key = self._idempotency_key(session_id, action_id, step_id)
@@ -354,13 +354,18 @@ class DiagnosisWorkflowEngine:
                 f"Duplicate confirmation response dropped: session={session_id}, "
                 f"action_id={action_id}, step_id={step_id}, idempotency_key={idempotency_key}"
             )
-            return None
+            return {
+                "code": "command_rejected",
+                "reason": "duplicate_confirmation_response",
+            }
 
         key = self._confirmation_key(session_id, confirmation_id)
         raw = self.redis.get(key)
         if not raw:
             logger.warning(f"Confirmation not found: session={session_id}, confirmation_id={confirmation_id}")
-            return None
+            return {
+                "code": "no_pending_confirmation",
+            }
 
         payload = json.loads(raw)
         payload["status"] = "responded"
@@ -369,7 +374,10 @@ class DiagnosisWorkflowEngine:
         payload["idempotency_key"] = idempotency_key
         self.redis.setex(key, 3600, json.dumps(payload))
         confirmation_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        return self._normalize_confirmation_risk(confirmation_data)
+        return {
+            "code": "command_accepted",
+            "risk_level": self._normalize_confirmation_risk(confirmation_data),
+        }
 
     async def _request_confirmation(self, state: DiagnosisState, confirmation_data: Dict[str, Any]) -> Dict[str, Any]:
         session_id = state.get("session_id", "unknown")
