@@ -168,6 +168,25 @@ class DiagnosisWorkflowEngine:
         except Exception as e:
             logger.error(f"Failed to record audit event for {session_id}: {e}")
 
+    def _emit_tool_call_trace(self, state: DiagnosisState, result: Dict[str, Any]):
+        session_id = state.get("session_id", "unknown")
+        for item in result.get("toolCalls", []) or []:
+            payload = {
+                "type": "tool_call",
+                "id": str(uuid.uuid4()),
+                "agentId": result.get("traceAgentId") or result.get("agentId"),
+                "parentId": result.get("parentId"),
+                "agentName": result.get("agent"),
+                "toolCall": item,
+                "timestamp": datetime.now().isoformat(),
+            }
+            event_publisher.publish_diagnosis_event(session_id, payload)
+            self._record_audit_event(session_id, "tool_call", payload)
+
+    def _emit_tool_call_trace_batch(self, state: DiagnosisState, results: List[Dict[str, Any]]):
+        for result in results:
+            self._emit_tool_call_trace(state, result)
+
     def _load_automation_policy(self) -> Dict[str, Any]:
         default_policy = {
             "automation_level": "balanced",
@@ -444,6 +463,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(planner_result)
+        self._emit_tool_call_trace(state, planner_result)
 
         state["current_phase"] = "execute"
         state = await self._parallel_analysis(state)
@@ -473,6 +493,7 @@ class DiagnosisWorkflowEngine:
                 mode=state.get("mode"),
             )
             state["messages"].append(reasoning)
+            self._emit_tool_call_trace(state, reasoning)
 
             state["current_phase"] = f"react_{idx + 1}_act"
             state = await self._parallel_analysis(state)
@@ -541,6 +562,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(orchestrator_result)
+        self._emit_tool_call_trace(state, orchestrator_result)
 
         state["current_phase"] = "specialist_execute"
         log_task = self.log_agent.execute_with_timeout(
@@ -581,6 +603,7 @@ class DiagnosisWorkflowEngine:
         )
         specialist_outputs = [log_result, metric_result, code_result, knowledge_result]
         state["messages"].extend(specialist_outputs)
+        self._emit_tool_call_trace_batch(state, specialist_outputs)
         state["evidence"].extend(
             [
                 {"type": "log", "data": log_result},
@@ -600,6 +623,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(aggregate_result)
+        self._emit_tool_call_trace(state, aggregate_result)
         state["confidence"] = max(state.get("confidence", 0), 85)
         state = await self._final_decision(state)
         return state
@@ -621,6 +645,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        self._emit_tool_call_trace(state, result)
         state["confidence"] = 50
         return state
 
@@ -670,6 +695,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        self._emit_tool_call_trace(state, result)
         state["current_phase"] = "analysis"
         self._persist_node_snapshot(
             state,
@@ -700,6 +726,7 @@ class DiagnosisWorkflowEngine:
 
         base_evidence_len = len(state.get("evidence", []))
         state["messages"].extend([log_result, metric_result])
+        self._emit_tool_call_trace_batch(state, [log_result, metric_result])
         state["evidence"].extend([
             {"type": "log", "data": log_result},
             {"type": "metric", "data": metric_result},
@@ -727,6 +754,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        self._emit_tool_call_trace(state, result)
         state["evidence"].append({"type": "code", "data": result})
         self._persist_node_snapshot(
             state,
@@ -750,6 +778,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        self._emit_tool_call_trace(state, result)
         state["confidence"] = 70
         self._persist_node_snapshot(
             state,
@@ -845,6 +874,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        self._emit_tool_call_trace(state, result)
         state["confidence"] = 85
         self._persist_node_snapshot(
             state,
@@ -869,6 +899,7 @@ class DiagnosisWorkflowEngine:
             mode=state.get("mode"),
         )
         state["messages"].append(result)
+        self._emit_tool_call_trace(state, result)
         state["current_phase"] = "completed"
         self._persist_node_snapshot(
             state,
