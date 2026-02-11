@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from app.core.logging_config import get_logger
 import json
 
@@ -35,7 +36,6 @@ class DiagnosisState:
 class StateManager:
     def __init__(self):
         self._memory_states: Dict[str, DiagnosisState] = {}
-        self._event_sequence: Dict[str, int] = {}
         self._task_status_transitions: Dict[str, List[str]] = {
             "submitted": ["running", "canceled", "failed"],
             "running": ["waiting_user", "retrying", "completed", "failed", "canceled"],
@@ -73,16 +73,21 @@ class StateManager:
             raise ValueError(f"Invalid task status transition: {previous} -> {task_status}")
 
         state.task_status = task_status
-        self.record_event(
-            session_id,
-            "task_status_changed",
-            {
-                "from_status": previous,
-                "to_status": task_status,
-                **(event_data or {}),
-            },
-            db,
-        )
+
+        payload = {
+            "from_status": previous,
+            "to_status": task_status,
+            **(event_data or {}),
+        }
+
+        try:
+            self._upsert_task_status_snapshot(session_id, task_status, db)
+            self._insert_event_row(session_id, "task_status_changed", payload, db)
+            db.commit()
+        except Exception:
+            db.rollback()
+            state.task_status = previous
+            raise
 
     def get_state(self, session_id: str) -> Optional[DiagnosisState]:
         """Get current state from memory"""
@@ -92,7 +97,6 @@ class StateManager:
         """Create new diagnosis state"""
         state = DiagnosisState(session_id)
         self._memory_states[session_id] = state
-        self._event_sequence[session_id] = 0
         logger.info(f"Created state for session: {session_id}")
         return state
 
@@ -114,15 +118,16 @@ class StateManager:
 
         snapshot_data = json.dumps(state.to_dict())
 
+        updated_at_expr = "CURRENT_TIMESTAMP" if db.bind and db.bind.dialect.name == "sqlite" else "NOW()"
         db.execute(
             text(
-                """
+                f"""
                 INSERT INTO diagnosis_sessions (session_id, snapshot_data, snapshot_version)
                 VALUES (:session_id, :snapshot_data, 1)
                 ON CONFLICT (session_id)
                 DO UPDATE SET snapshot_data = :snapshot_data,
                               snapshot_version = diagnosis_sessions.snapshot_version + 1,
-                              updated_at = NOW()
+                              updated_at = {updated_at_expr}
             """
             ),
             {"session_id": session_id, "snapshot_data": snapshot_data},
@@ -132,26 +137,134 @@ class StateManager:
 
     def record_event(self, session_id: str, event_type: str, event_data: Dict[str, Any], db: Session):
         """Record event to database"""
-        sequence = self._event_sequence.get(session_id, 0)
-        self._event_sequence[session_id] = sequence + 1
+        self._insert_event_row(session_id, event_type, event_data, db)
+        db.commit()
+
+    def _insert_event_row(self, session_id: str, event_type: str, event_data: Dict[str, Any], db: Session):
+        """Insert event with database-derived per-session monotonic sequence."""
 
         from sqlalchemy import text
+
+        for _ in range(5):
+            try:
+                db.execute(
+                    text(
+                        """
+                        WITH next_sequence AS (
+                            SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence
+                            FROM diagnosis_events
+                            WHERE session_id = :session_id
+                        )
+                        INSERT INTO diagnosis_events (session_id, event_type, event_data, sequence)
+                        SELECT :session_id, :event_type, :event_data, sequence
+                        FROM next_sequence
+                        """
+                    ),
+                    {
+                        "session_id": session_id,
+                        "event_type": event_type,
+                        "event_data": json.dumps(event_data),
+                    },
+                )
+                return
+            except IntegrityError:
+                db.rollback()
+
+        raise RuntimeError(f"Failed to allocate event sequence for session {session_id} after retries")
+
+    def register_idempotency_key(self, session_id: str, action_id: str, step_id: str, db: Session) -> bool:
+        from sqlalchemy import text
+
+        inserted = db.execute(
+            text(
+                """
+                INSERT INTO diagnosis_idempotency_keys (session_id, action_id, step_id)
+                VALUES (:session_id, :action_id, :step_id)
+                ON CONFLICT (session_id, action_id, step_id)
+                DO NOTHING
+                """
+            ),
+            {
+                "session_id": session_id,
+                "action_id": action_id,
+                "step_id": step_id,
+            },
+        )
+        db.commit()
+        return inserted.rowcount > 0
+
+    def register_idempotency_key_atomic(self, session_id: str, action_id: str, step_id: str, db: Session) -> bool:
+        from sqlalchemy import text
+
+        inserted = db.execute(
+            text(
+                """
+                INSERT INTO diagnosis_idempotency_keys (session_id, action_id, step_id)
+                VALUES (:session_id, :action_id, :step_id)
+                ON CONFLICT (session_id, action_id, step_id)
+                DO NOTHING
+                """
+            ),
+            {
+                "session_id": session_id,
+                "action_id": action_id,
+                "step_id": step_id,
+            },
+        )
+        return inserted.rowcount > 0
+
+    def _upsert_task_status_snapshot(self, session_id: str, task_status: str, db: Session):
+        from sqlalchemy import text
+
+        if db.bind and db.bind.dialect.name == "sqlite":
+            existing_row = db.execute(
+                text("SELECT snapshot_data FROM diagnosis_sessions WHERE session_id = :session_id"),
+                {"session_id": session_id},
+            ).fetchone()
+            existing = {}
+            if existing_row and existing_row[0]:
+                existing = json.loads(existing_row[0])
+            existing["task_status"] = task_status
+            existing.setdefault("session_id", session_id)
+
+            db.execute(
+                text(
+                    """
+                    INSERT INTO diagnosis_sessions (session_id, snapshot_data, snapshot_version)
+                    VALUES (:session_id, :snapshot_data, 1)
+                    ON CONFLICT (session_id)
+                    DO UPDATE SET
+                        snapshot_data = :snapshot_data,
+                        snapshot_version = diagnosis_sessions.snapshot_version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    """
+                ),
+                {
+                    "session_id": session_id,
+                    "snapshot_data": json.dumps(existing),
+                },
+            )
+            return
 
         db.execute(
             text(
                 """
-                INSERT INTO diagnosis_events (session_id, event_type, event_data, sequence)
-                VALUES (:session_id, :event_type, :event_data, :sequence)
-            """
+                INSERT INTO diagnosis_sessions (session_id, snapshot_data, snapshot_version)
+                VALUES (:session_id, CAST(:snapshot_data AS JSONB), 1)
+                ON CONFLICT (session_id)
+                DO UPDATE SET
+                    snapshot_data = COALESCE(diagnosis_sessions.snapshot_data, '{}'::jsonb) ||
+                                    jsonb_build_object('task_status', :task_status),
+                    snapshot_version = diagnosis_sessions.snapshot_version + 1,
+                    updated_at = NOW()
+                """
             ),
             {
                 "session_id": session_id,
-                "event_type": event_type,
-                "event_data": json.dumps(event_data),
-                "sequence": sequence,
+                "snapshot_data": json.dumps({"session_id": session_id, "task_status": task_status}),
+                "task_status": task_status,
             },
         )
-        db.commit()
 
     def load_from_snapshot(self, session_id: str, db: Session) -> Optional[DiagnosisState]:
         """Load state from latest snapshot"""
