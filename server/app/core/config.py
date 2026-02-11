@@ -44,6 +44,7 @@ class Settings(BaseSettings):
 
     # Feature flags
     use_real_agents: bool = False
+    enable_demo_trace: bool = False
 
     @property
     def cors_origins_list(self) -> List[str]:
