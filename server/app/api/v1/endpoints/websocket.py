@@ -28,8 +28,12 @@ class ConnectionManager:
         if session_id in self.active_connections:
             del self.active_connections[session_id]
         if session_id in self.subscribers:
-            self.subscribers[session_id].stop()
-            del self.subscribers[session_id]
+            try:
+                self.subscribers[session_id].stop()
+            except Exception as e:
+                logger.warning(f"Failed to stop subscriber [{session_id}]: {e}")
+            finally:
+                del self.subscribers[session_id]
         logger.info(f"WebSocket disconnected: {session_id}, total: {len(self.active_connections)}")
 
     async def send_message(self, session_id: str, message: dict):
@@ -50,8 +54,19 @@ class ConnectionManager:
             await self.send_message(session_id, event)
 
         subscriber = EventSubscriber()
-        await subscriber.subscribe_to_diagnosis(session_id, event_handler)
         self.subscribers[session_id] = subscriber
+
+        try:
+            await subscriber.subscribe_to_diagnosis(session_id, event_handler)
+        except Exception as e:
+            logger.error(f"Subscribe failed [{session_id}]: {e}", exc_info=True)
+            self.subscribers.pop(session_id, None)
+            await self.send_message(session_id, {
+                "type": "error",
+                "data": {"message": f"Failed to subscribe to events: {str(e)}"},
+                "timestamp": datetime.now().isoformat()
+            })
+            raise
 
 
 manager = ConnectionManager()
