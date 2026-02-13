@@ -36,19 +36,38 @@
                                                 │
 ┌───────────────────────────────────────────────┼─────────────────────────────┐
 │                           AgentScope 编排层                                  │
-│  ┌────────────────────────────────────────────▼────────────────────────┐   │
-│  │                     Orchestrator Agent (协调者)                      │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │   │
-│  │  │ 状态机   │  │ 决策引擎 │  │ 记忆管理 │  │ 工具调度 │            │   │
-│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘            │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                    Orchestrator Agent (主协调者)                      │  │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐             │  │
+│  │  │ 状态机   │  │ 决策引擎 │  │ 记忆管理 │  │ 工具调度 │             │  │
+│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘             │  │
+│  │                                    │                                 │  │
+│  │                    ┌───────────────┴───────────────┐                 │  │
+│  │                    ▼                             ▼                  │  │
+│  │           ┌─────────────┐              ┌─────────────────┐          │  │
+│  │           │ Plan Agent  │              │ 任务复杂度评估  │          │  │
+│  │           │  (规划者)   │              │                 │          │  │
+│  │           └─────────────┘              └─────────────────┘          │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
 │                                    │                                        │
-│  ┌─────────────┐  ┌─────────────┐  │  ┌─────────────┐  ┌─────────────┐    │
-│  │ Log Analyst │  │Code Reviewer│◄─┼─►│ Knowledge   │  │ Metrics     │    │
-│  │ 日志分析专家│  │ 代码审查专家│  │  │ Retriever   │  │ Monitor     │    │
-│  └─────────────┘  └─────────────┘  │  └─────────────┘  └─────────────┘    │
-│                                    │                                        │
-└────────────────────────────────────┼────────────────────────────────────────┘
+│                    ┌───────────────┴───────────────┐                       │
+│                    │        Sub-Agents 调度        │                       │
+│                    ▼                ▼              ▼                       │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
+│  │ Log Analyst │  │Code Reviewer│  │ Knowledge   │  │ Metrics     │       │
+│  │ 日志分析专家│  │ 代码审查专家│  │ Retriever   │  │ Monitor     │       │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘       │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                      Skill Agents (动态加载)                          │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                   │  │
+│  │  │ Database    │  │ Network     │  │ Container   │  ... (可扩展)     │  │
+│  │  │ Skill Agent │  │ Skill Agent │  │ Skill Agent │                   │  │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘                   │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
                                      │
 ┌────────────────────────────────────┼────────────────────────────────────────┐
 │                           工具执行层                                         │
@@ -83,48 +102,183 @@
 │  └──────┬──────┘                                                           │
 │         │                                                                   │
 │         ▼                                                                   │
-│  ┌─────────────┐                                                           │
-│  │ Orchestrator│ ──── 问题分类 ────► 加载对应 Skills                        │
-│  │ Agent       │                                                           │
-│  └──────┬──────┘                                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                     Orchestrator Agent                               │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │   │
+│  │  │ Phase 1: 问题识别                                              │  │   │
+│  │  │ • 解析用户意图                                                 │  │   │
+│  │  │ • 识别问题类型                                                 │  │   │
+│  │  │ • 构建上下文                                                   │  │   │
+│  │  └───────────────────────────────────────────────────────────────┘  │   │
+│  │                              │                                      │   │
+│  │                              ▼                                      │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │   │
+│  │  │ Phase 2: 调用 Plan Agent 生成执行计划                          │  │   │
+│  │  │                                                               │  │   │
+│  │  │  ┌─────────────┐                                              │  │   │
+│  │  │  │ Plan Agent  │ ──── 分析任务 ────► 生成计划(DAG/步骤序列)   │  │   │
+│  │  │  └─────────────┘                                              │  │   │
+│  │  │                                                               │  │   │
+│  │  │  返回: Plan { steps[], dependencies[], complexity }           │  │   │
+│  │  └───────────────────────────────────────────────────────────────┘  │   │
+│  │                              │                                      │   │
+│  │                              ▼                                      │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │   │
+│  │  │ Phase 3: 加载 Skills (根据问题类型动态加载)                     │  │   │
+│  │  └───────────────────────────────────────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
 │         │                                                                   │
-│         ├──────────────────┬──────────────────┐                            │
-│         ▼                  ▼                  ▼                            │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                     │
-│  │ Log Analyst │    │Code Reviewer│    │ Knowledge   │                     │
-│  │             │    │             │    │ Retriever   │                     │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                     │
-│         │                  │                  │                             │
-│         ▼                  ▼                  ▼                             │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                     │
-│  │ Tool        │    │ Tool        │    │ Milvus      │                     │
-│  │ Executor    │    │ Executor    │    │ Vector DB   │                     │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                     │
-│         │                  │                  │                             │
-│         └──────────────────┴──────────────────┘                             │
+│         │  根据计划执行步骤                                                  │
+│         ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                     Sub-Agents 并行/串行执行                         │   │
+│  │                                                                      │   │
+│  │   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐              │   │
+│  │   │ Log Analyst │   │Code Reviewer│   │ Skill Agent │              │   │
+│  │   │   (专家)    │   │   (专家)    │   │  (动态加载) │              │   │
+│  │   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘              │   │
+│  │          │                 │                 │                      │   │
+│  │          ▼                 ▼                 ▼                      │   │
+│  │   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐              │   │
+│  │   │ Tool        │   │ Tool        │   │ Skill Tools │              │   │
+│  │   │ Executor    │   │ Executor    │   │             │              │   │
+│  │   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘              │   │
+│  │          │                 │                 │                      │   │
+│  └──────────┴─────────────────┴─────────────────┴──────────────────────┘   │
 │                            │                                                │
 │                            ▼                                                │
-│                     ┌─────────────┐                                        │
-│                     │ Orchestrator│ ──── 汇总分析 ────► 生成假设             │
-│                     │ Agent       │                                        │
-│                     └──────┬──────┘                                        │
-│                            │                                                │
-│                            ▼                                                │
-│                     ┌─────────────┐                                        │
-│                     │ 验证假设    │ ──── 调用工具验证 ────► 确认/推翻       │
-│                     └──────┬──────┘                                        │
-│                            │                                                │
-│                            ▼                                                │
-│                     ┌─────────────┐                                        │
-│                     │ 生成报告    │ ──── WebSocket 推送 ────► 前端展示      │
-│                     └──────┬──────┘                                        │
-│                            │                                                │
-│                            ▼                                                │
-│                     ┌─────────────┐                                        │
-│                     │ 知识提取    │ ──── 存储到 Milvus ────► 更新知识库     │
-│                     └─────────────┘                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                     Orchestrator Agent                               │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │   │
+│  │  │ Phase 4: 汇总分析 ────► 生成假设 ────► 验证假设                 │  │   │
+│  │  └───────────────────────────────────────────────────────────────┘  │   │
+│  │                              │                                      │   │
+│  │                              ▼                                      │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │   │
+│  │  │ Phase 5: 生成报告 ────► WebSocket 推送 ────► 前端展示          │  │   │
+│  │  └───────────────────────────────────────────────────────────────┘  │   │
+│  │                              │                                      │   │
+│  │                              ▼                                      │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │   │
+│  │  │ Phase 6: 知识提取 ────► 存储到 Milvus ────► 更新知识库         │  │   │
+│  │  └───────────────────────────────────────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.3 Agent 协作流程图
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Agent 协作流程图                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  用户输入                                                                    │
+│     │                                                                       │
+│     ▼                                                                       │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                    Orchestrator Agent (主协调者)                      │  │
+│  │                                                                       │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ Step 1: 问题识别与意图理解                                     │  │  │
+│  │  │         • 解析用户输入                                         │  │  │
+│  │  │         • 识别问题领域和类型                                   │  │  │
+│  │  │         • 构建初始上下文                                       │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  │                              │                                       │  │
+│  │                              ▼                                       │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ Step 2: 调用 Plan Agent 生成执行计划                           │  │  │
+│  │  │                                                                │  │  │
+│  │  │         ┌─────────────────────────────────┐                    │  │  │
+│  │  │         │       Plan Agent                │                    │  │  │
+│  │  │         │  • 分析任务需求                  │                    │  │  │
+│  │  │         │  • 评估任务复杂度                │                    │  │  │
+│  │  │         │  • 生成执行计划 (DAG/步骤序列)   │                    │  │  │
+│  │  │         │  • 返回计划给 Orchestrator      │                    │  │  │
+│  │  │         └─────────────────────────────────┘                    │  │  │
+│  │  │                          │                                     │  │  │
+│  │  │                          ▼                                     │  │  │
+│  │  │         返回: Plan { steps[], dependencies[], priority[] }     │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  │                              │                                       │  │
+│  │                              ▼                                       │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ Step 3: 执行计划调度                                           │  │  │
+│  │  │                                                                │  │  │
+│  │  │   ┌─────────────────────────────────────────────────────────┐  │  │  │
+│  │  │   │              任务复杂度评估                              │  │  │  │
+│  │  │   │                                                         │  │  │  │
+│  │  │   │   复杂度 = LOW  ──►  直接调用 Sub-Agent 执行            │  │  │  │
+│  │  │   │   复杂度 = HIGH ──►  委托给 Sub-Orchestrator            │  │  │  │
+│  │  │   └─────────────────────────────────────────────────────────┘  │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                              │                                              │
+│          ┌───────────────────┼───────────────────┐                         │
+│          ▼                   ▼                   ▼                         │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                 │
+│  │ 内置专家     │    │ 内置专家     │    │ Skill Agent  │                 │
+│  │ Sub-Agent    │    │ Sub-Agent    │    │ (动态加载)   │                 │
+│  │              │    │              │    │              │                 │
+│  │ Log Analyst  │    │Code Reviewer │    │ Database     │                 │
+│  │ Knowledge    │    │ Metrics      │    │ Network      │                 │
+│  │ Retriever    │    │ Monitor      │    │ Container... │                 │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                 │
+│         │                   │                   │                          │
+│         │                   ▼                   │                          │
+│         │           ┌──────────────┐            │                          │
+│         │           │Sub-Orchestr. │            │                          │
+│         │           │(复杂子任务)  │            │                          │
+│         │           │+ Plan Agent  │            │                          │
+│         │           └──────┬───────┘            │                          │
+│         │                  │                    │                          │
+│         └──────────────────┴────────────────────┘                          │
+│                            │                                                │
+│                            ▼                                                │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                    Orchestrator Agent (结果汇总)                      │  │
+│  │                                                                       │  │
+│  │  Step 4: 收集各 Sub-Agent 结果                                        │  │
+│  │  Step 5: 汇总分析，生成假设                                           │  │
+│  │  Step 6: 验证假设，定位根因                                           │  │
+│  │  Step 7: 生成最终报告                                                 │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                            │                                                │
+│                            ▼                                                │
+│                     输出结果给用户                                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.4 任务复杂度评估策略
+
+| 复杂度级别 | 判断条件 | 处理策略 |
+|-----------|---------|---------|
+| **LOW** | 单一Agent可完成、无依赖、无需用户交互 | 直接调用Sub-Agent执行 |
+| **MEDIUM** | 需要多个Agent协作、有简单依赖 | Orchestrator协调并行/串行执行 |
+| **HIGH** | 多阶段任务、复杂依赖、需要用户交互 | 委托给Sub-Orchestrator处理 |
+
+```python
+class ComplexityAssessor:
+    def assess(self, step: PlanStep, context: Context) -> Complexity:
+        factors = {
+            "multi_agent": step.requires_multiple_agents,
+            "has_dependencies": len(step.dependencies) > 1,
+            "needs_interaction": step.needs_user_input,
+            "estimated_steps": step.estimated_substeps > 3,
+            "domain_specific": step.requires_skill_agent
+        }
+        
+        score = sum(factors.values())
+        
+        if score >= 3:
+            return Complexity.HIGH
+        elif score >= 1:
+            return Complexity.MEDIUM
+        else:
+            return Complexity.LOW
 ```
 
 ## 3. 核心组件设计
@@ -134,13 +288,16 @@
 #### 3.1.1 Orchestrator Agent（协调者）
 
 **职责**：
-- 解析用户问题，识别问题类型
-- 规划排查步骤，调度专家 Agent
+- 解析用户问题，识别问题类型和意图
+- 调用 Plan Agent 生成执行计划
+- 根据计划调度 Sub-Agents 执行任务
 - 维护全局状态，决策下一步行动
 - 汇总结果，生成最终报告
 
 **关键能力**：
-- 任务分解
+- 意图理解与问题分类
+- 任务复杂度评估
+- 计划执行与调度
 - 状态机管理
 - 动态决策
 
@@ -150,32 +307,125 @@ class OrchestratorAgent:
         self.state_machine = StateMachine()
         self.memory = MemoryManager()
         self.decision_engine = DecisionEngine()
+        self.plan_agent = PlanAgent()
+        self.complexity_assessor = ComplexityAssessor()
+        self.skill_registry = SkillRegistry()
     
     async def process(self, user_input: str) -> AsyncGenerator[Message, None]:
         state = self.state_machine.current_state
         
         while state != State.END:
-            decision = self.decision_engine.decide(state, self.memory.context)
+            if state == State.PLANNING:
+                plan = await self.plan_agent.generate_plan(
+                    task=self.current_task,
+                    context=self.memory.context
+                )
+                self.current_plan = plan
+                state = self.state_machine.transition(State.EXECUTING)
+                continue
             
-            if decision.action == ActionType.CALL_AGENT:
-                result = await self.call_agent(decision.agent, decision.params)
-                yield Message(type="agent_result", content=result)
+            if state == State.EXECUTING:
+                for step in self.current_plan.steps:
+                    complexity = self.complexity_assessor.assess(step, self.memory.context)
+                    
+                    if complexity == Complexity.HIGH:
+                        result = await self.delegate_to_sub_orchestrator(step)
+                    else:
+                        result = await self.execute_step(step)
+                    
+                    self.memory.add(result)
+                    yield Message(type="step_result", content=result)
+                
+                state = self.state_machine.transition(State.SUMMARIZING)
+                continue
             
-            elif decision.action == ActionType.CALL_TOOL:
-                result = await self.call_tool(decision.tool, decision.params)
-                yield Message(type="tool_result", content=result)
-            
-            elif decision.action == ActionType.ASK_USER:
-                yield Message(type="user_input_request", content=decision.prompt)
-                user_response = await self.wait_for_user_input()
-                self.memory.add(user_response)
-            
-            state = self.state_machine.transition(decision.next_state)
+            if state == State.SUMMARIZING:
+                report = await self.generate_report()
+                yield Message(type="final_answer", content=report)
+                state = self.state_machine.transition(State.END)
         
         yield Message(type="final_answer", content=self.generate_report())
 ```
 
-#### 3.1.2 专家 Agent
+#### 3.1.2 Plan Agent（规划者）
+
+**职责**：
+- 分析任务需求，理解问题上下文
+- 评估任务复杂度
+- 生成结构化的执行计划（DAG 或步骤序列）
+- 为每个步骤分配执行策略
+
+**关键能力**：
+- 任务分解
+- 依赖分析
+- 复杂度评估
+- 计划优化
+
+```python
+class PlanAgent:
+    def __init__(self, llm, skill_registry: SkillRegistry):
+        self.llm = llm
+        self.skill_registry = skill_registry
+    
+    async def generate_plan(self, task: Task, context: Context) -> Plan:
+        available_skills = self.skill_registry.get_relevant_skills(task.domain)
+        
+        plan = await self.llm.generate(
+            prompt=self._build_planning_prompt(task, context, available_skills),
+            response_format=Plan
+        )
+        
+        for step in plan.steps:
+            step.complexity = self._assess_complexity(step)
+            if step.requires_skill:
+                step.skill_name = self._match_skill(step, available_skills)
+        
+        plan.dag = self._build_dag(plan.steps)
+        return plan
+    
+    def _assess_complexity(self, step: PlanStep) -> Complexity:
+        factors = [
+            step.requires_multiple_agents,
+            len(step.dependencies) > 1,
+            step.needs_user_interaction,
+            step.estimated_substeps > 3
+        ]
+        return Complexity.HIGH if sum(factors) >= 2 else Complexity.LOW
+    
+    def _build_dag(self, steps: List[PlanStep]) -> DAG:
+        dag = DAG()
+        for step in steps:
+            dag.add_node(step.id, step)
+            for dep in step.dependencies:
+                dag.add_edge(dep, step.id)
+        return dag
+
+@dataclass
+class Plan:
+    steps: List[PlanStep]
+    dependencies: Dict[str, List[str]]
+    dag: Optional[DAG] = None
+    estimated_duration: int = 0
+
+@dataclass
+class PlanStep:
+    id: str
+    description: str
+    agent_type: str
+    params: dict
+    dependencies: List[str] = field(default_factory=list)
+    complexity: Complexity = Complexity.LOW
+    requires_skill: bool = False
+    skill_name: Optional[str] = None
+    estimated_substeps: int = 1
+    needs_user_interaction: bool = False
+```
+
+#### 3.1.3 专家 Agent（Sub-Agents）
+
+专家 Agent 分为两类：**内置专家 Agent** 和 **Skill Agent（动态加载）**。
+
+**内置专家 Agent**：
 
 | Agent | 职责 | 工具依赖 |
 |-------|------|----------|
@@ -184,18 +434,27 @@ class OrchestratorAgent:
 | Knowledge Retriever | 知识检索、案例推荐 | vector_search, keyword_search |
 | Metrics Monitor | 指标监控、性能分析 | prometheus_query, grafana_api |
 
+**Skill Agent（动态加载）**：
+
+| Skill Agent | 职责 | 工具依赖 |
+|-------------|------|----------|
+| Database Skill | 数据库问题排查 | db_connection_test, slow_query_analyzer, lock_detector |
+| Network Skill | 网络问题排查 | ping_test, dns_lookup, trace_route, port_scanner |
+| Container Skill | 容器问题排查 | docker_inspect, k8s_describe, log_collector |
+| Custom Skill | 用户自定义领域 | 根据技能包定义 |
+
 ### 3.2 状态机设计
 
 ```
 ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
-│  INIT    │─────►│ GATHER   │─────►│ ANALYZE  │─────►│HYPOTHESIZE│
-│  初始化  │      │ 信息收集 │      │ 深度分析 │      │ 假设生成  │
+│  INIT    │─────►│ PLANNING │─────►│ EXECUTING│─────►│HYPOTHESIZE│
+│  初始化  │      │  规划    │      │  执行    │      │ 假设生成  │
 └──────────┘      └──────────┘      └──────────┘      └────┬─────┘
                                                             │
                                                             ▼
 ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
-│   END    │◄─────│  REPORT  │◄─────│ROOT_CAUSE│◄─────│  VERIFY  │
-│  结束    │      │ 生成报告 │      │ 根因定位 │      │ 验证假设  │
+│   END    │◄─────│  REPORT  │◄─────│SUMMARIZE │◄─────│  VERIFY  │
+│  结束    │      │ 生成报告 │      │ 结果汇总 │      │ 验证假设  │
 └──────────┘      └──────────┘      └──────────┘      └──────────┘
 ```
 
@@ -203,19 +462,204 @@ class OrchestratorAgent:
 
 | 当前状态 | 触发条件 | 目标状态 |
 |----------|----------|----------|
-| INIT | 用户提交问题 | GATHER |
-| GATHER | 收集到足够信息 | ANALYZE |
-| GATHER | 信息不足 | GATHER (请求用户输入) |
-| ANALYZE | 分析完成 | HYPOTHESIZE |
+| INIT | 用户提交问题 | PLANNING |
+| PLANNING | Plan Agent 生成计划完成 | EXECUTING |
+| EXECUTING | 所有步骤执行完成 | SUMMARIZE |
+| EXECUTING | 执行中需要更多信息 | PLANNING (重新规划) |
+| SUMMARIZE | 汇总分析完成 | HYPOTHESIZE |
 | HYPOTHESIZE | 假设生成完成 | VERIFY |
-| VERIFY | 验证成功 | ROOT_CAUSE |
-| VERIFY | 验证失败 | HYPOTHESIZE |
-| ROOT_CAUSE | 根因确认 | REPORT |
+| VERIFY | 验证成功 | SUMMARIZE (继续分析) 或 REPORT |
+| VERIFY | 验证失败 | HYPOTHESIZE (生成新假设) |
 | REPORT | 报告生成完成 | END |
 
-### 3.3 记忆管理
+### 3.3 Skill 架构设计
 
-#### 3.3.1 短期记忆（Redis）
+#### 3.3.1 Skill 概念模型
+
+Skill 是领域特定能力的封装，可以动态加载为 Sub-Agent 参与问题排查。
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            Skill 架构设计                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Skill = 工具集 + 知识库 + Agent行为模板                                     │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         Skill 结构                                   │   │
+│  │                                                                      │   │
+│  │  skill_manifest.yaml:                                                │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │   │
+│  │  │ name: database-troubleshooting                                │  │   │
+│  │  │ version: 1.0.0                                                │  │   │
+│  │  │ description: 数据库问题排查技能                                │  │   │
+│  │  │ domain: database                                              │  │   │
+│  │  │ tools:                                                        │  │   │
+│  │  │   - db_connection_test                                        │  │   │
+│  │  │   - slow_query_analyzer                                       │  │   │
+│  │  │   - lock_detector                                             │  │   │
+│  │  │   - index_advisor                                             │  │   │
+│  │  │ knowledge:                                                    │  │   │
+│  │  │   collections: [db_errors, db_tuning, db_best_practices]      │  │   │
+│  │  │ agent_template:                                               │  │   │
+│  │  │   system_prompt: "你是数据库排查专家..."                       │  │   │
+│  │  │   decision_patterns:                                          │  │   │
+│  │  │     - pattern: "连接超时"                                     │  │   │
+│  │  │       actions: [db_connection_test, check_network]            │  │   │
+│  │  │     - pattern: "查询慢"                                       │  │   │
+│  │  │       actions: [slow_query_analyzer, index_advisor]           │  │   │
+│  │  └───────────────────────────────────────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 3.3.2 Skill 加载流程
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Skill 加载为 Sub-Agent 流程                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐                │
+│  │ Skill       │      │ Skill       │      │ Skill Agent │                │
+│  │ Registry    │─────►│ Loader      │─────►│ Factory     │                │
+│  │ (注册中心)  │      │ (加载器)    │      │             │                │
+│  └─────────────┘      └─────────────┘      └──────┬──────┘                │
+│                                                    │                       │
+│                              ┌─────────────────────┴───────────────────┐   │
+│                              │                                         │   │
+│                              ▼                                         ▼   │
+│                     ┌─────────────────┐                    ┌─────────────┐ │
+│                     │  Skill Agent    │                    │  Tool Set   │ │
+│                     │  Instance       │                    │  (工具实例) │ │
+│                     │                 │                    │             │ │
+│                     │  • System Prompt│                    │  • Tool 1   │ │
+│                     │  • Knowledge    │                    │  • Tool 2   │ │
+│                     │  • Patterns     │                    │  • Tool N   │ │
+│                     └─────────────────┘                    └─────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 3.3.3 Skill Registry 设计
+
+```python
+class SkillRegistry:
+    def __init__(self, storage: SkillStorage):
+        self.storage = storage
+        self._cache: Dict[str, Skill] = {}
+    
+    def register(self, skill: Skill) -> None:
+        self.storage.save(skill.manifest)
+        self._cache[skill.name] = skill
+    
+    def get_relevant_skills(self, domain: str) -> List[Skill]:
+        skills = self.storage.query_by_domain(domain)
+        return [self._load_skill(s) for s in skills]
+    
+    def _load_skill(self, manifest: SkillManifest) -> Skill:
+        if manifest.name in self._cache:
+            return self._cache[manifest.name]
+        
+        skill = Skill(
+            name=manifest.name,
+            version=manifest.version,
+            tools=self._load_tools(manifest.tools),
+            knowledge=self._load_knowledge(manifest.knowledge),
+            agent_template=manifest.agent_template
+        )
+        self._cache[manifest.name] = skill
+        return skill
+
+class SkillAgentFactory:
+    def __init__(self, registry: SkillRegistry, llm):
+        self.registry = registry
+        self.llm = llm
+    
+    def create_agent(self, skill_name: str) -> SkillAgent:
+        skill = self.registry.get(skill_name)
+        
+        return SkillAgent(
+            name=f"{skill.name}_agent",
+            llm=self.llm,
+            system_prompt=skill.agent_template.system_prompt,
+            tools=skill.tools,
+            knowledge=skill.knowledge,
+            decision_patterns=skill.agent_template.decision_patterns
+        )
+
+@dataclass
+class Skill:
+    name: str
+    version: str
+    tools: List[Tool]
+    knowledge: List[KnowledgeCollection]
+    agent_template: AgentTemplate
+
+@dataclass
+class AgentTemplate:
+    system_prompt: str
+    decision_patterns: List[DecisionPattern]
+
+@dataclass
+class DecisionPattern:
+    pattern: str
+    actions: List[str]
+    priority: int = 0
+```
+
+#### 3.3.4 Skill Agent 执行流程
+
+```python
+class SkillAgent:
+    def __init__(
+        self,
+        name: str,
+        llm,
+        system_prompt: str,
+        tools: List[Tool],
+        knowledge: List[KnowledgeCollection],
+        decision_patterns: List[DecisionPattern]
+    ):
+        self.name = name
+        self.llm = llm
+        self.system_prompt = system_prompt
+        self.tools = {t.name: t for t in tools}
+        self.knowledge = knowledge
+        self.decision_patterns = decision_patterns
+    
+    async def execute(self, task: str, context: Context) -> AgentResult:
+        matched_patterns = self._match_patterns(task)
+        
+        results = []
+        for pattern in matched_patterns:
+            for action in pattern.actions:
+                if action in self.tools:
+                    tool = self.tools[action]
+                    result = await tool.execute(context)
+                    results.append(result)
+        
+        analysis = await self._analyze_with_llm(task, context, results)
+        
+        return AgentResult(
+            agent_name=self.name,
+            analysis=analysis,
+            tool_results=results,
+            confidence=self._calculate_confidence(results)
+        )
+    
+    def _match_patterns(self, task: str) -> List[DecisionPattern]:
+        matched = []
+        for pattern in self.decision_patterns:
+            if pattern.pattern.lower() in task.lower():
+                matched.append(pattern)
+        return sorted(matched, key=lambda p: p.priority, reverse=True)
+```
+
+### 3.4 记忆管理
+
+#### 3.4.1 短期记忆（Redis）
 
 ```python
 class ShortTermMemory:
@@ -237,7 +681,7 @@ class ShortTermMemory:
         return Context(messages=[Message.parse_raw(m) for m in messages])
 ```
 
-#### 3.3.2 Context 压缩策略
+#### 3.4.2 Context 压缩策略
 
 ```python
 class ContextCompressor:
@@ -260,7 +704,7 @@ class ContextCompressor:
         return context
 ```
 
-### 3.4 工具执行引擎
+### 3.5 工具执行引擎
 
 ```python
 class ToolExecutor:
